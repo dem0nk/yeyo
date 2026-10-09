@@ -3,6 +3,7 @@ mod packet;
 
 use packet::ethernet::EthernetHeader;
 use packet::ipv6::Ipv6Header;
+use packet::tcp::TcpHeader;
 use packet::udp::UdpHeader;
 
 use std::net::Ipv6Addr;
@@ -33,11 +34,19 @@ fn main() -> Result<(), pcap::Error> {
                         ip.next_header,
                         ip.hop_limit
                     );
-                    if ip.next_header == 17 {
-                        match UdpHeader::parse(&packet.data[54..]) {
+                    match ip.next_header {
+                        17 => match UdpHeader::parse(&packet.data[54..]) {
                             Ok(udp) => println!("    udp {} -> {}", udp.src_port, udp.dst_port),
                             Err(e) => println!("bad udp: {:?}", e),
-                        }
+                        },
+                        6 => match TcpHeader::parse(&packet.data[54..]) {
+                            Ok(tcp) => println!(
+                                "    tcp {} -> {} flags={:08b} seq={} len={}",
+                                tcp.src_port, tcp.dst_port, tcp.flags, tcp.seq, tcp.header_len
+                            ),
+                            Err(e) => println!("bad tcp: {:?}", e),
+                        },
+                        _ => {}
                     }
                 }
                 Err(e) => println!("bad ipv6: {:?}", e),
