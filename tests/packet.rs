@@ -3,7 +3,7 @@ mod common;
 use std::error::Error;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use yeyo::error::{Layer, YeyoError};
-use yeyo::packet::{IpHeader, Packet, Transport};
+use yeyo::packet::{IpHeader, Packet, Transport, tcp::TcpFlags};
 
 #[test]
 fn test_parse_ipv4_udp_ok() -> Result<(), Box<dyn Error>> {
@@ -117,6 +117,39 @@ fn test_parse_truncated_ipv6_propagates_err() {
             layer: Layer::Ipv6,
             needed: 40,
             got: 20
+        })
+    );
+}
+
+#[test]
+fn test_parse_ipv4_tcp_ok() -> Result<(), Box<dyn Error>> {
+    let tcp_bytes = common::tcp(52814, 443, 0x02, &[]);
+    let ip_bytes = common::ipv4(6, [192, 168, 1, 2], [93, 184, 216, 34], &tcp_bytes);
+    let bytes = common::ethernet(0x0800, &ip_bytes);
+
+    let pkt = Packet::parse(&bytes)?;
+
+    match pkt.transport {
+        Some(Transport::Tcp(tcp)) => {
+            assert_eq!(tcp.dst_port, 443);
+            assert!(tcp.flags.contains(TcpFlags::SYN));
+        }
+        _ => panic!("expected TCP"),
+    }
+    Ok(())
+}
+
+#[test]
+fn test_parse_truncated_tcp_propagates_err() {
+    let ip_bytes = common::ipv4(6, [192, 168, 1, 2], [93, 184, 216, 34], &[0; 10]);
+    let bytes = common::ethernet(0x0800, &ip_bytes);
+
+    assert_eq!(
+        Packet::parse(&bytes).err(),
+        Some(YeyoError::Truncated {
+            layer: Layer::Tcp,
+            needed: 20,
+            got: 10
         })
     );
 }

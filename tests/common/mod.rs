@@ -48,6 +48,20 @@ pub fn ipv4(protocol: u8, src: [u8; 4], dst: [u8; 4], payload: &[u8]) -> Vec<u8>
     bytes
 }
 
+pub fn tcp(src_port: u16, dst_port: u16, flags: u8, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&src_port.to_be_bytes());
+    bytes.extend_from_slice(&dst_port.to_be_bytes());
+    bytes.extend_from_slice(&1000u32.to_be_bytes());
+    bytes.extend_from_slice(&2000u32.to_be_bytes());
+    bytes.push(0x50);
+    bytes.push(flags);
+    bytes.extend_from_slice(&65535u16.to_be_bytes());
+    bytes.extend_from_slice(&[0, 0, 0, 0]);
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
 pub fn udp(src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {
     let length = (8 + payload.len()) as u16;
     let mut bytes = Vec::new();

@@ -37,7 +37,7 @@ fn run() -> Result<(), YeyoError> {
         match &pkt.transport {
             Some(Transport::Tcp(tcp)) => println!(
                 "    tcp {} -> {} flags={:08b}",
-                tcp.src_port, tcp.dst_port, tcp.flags
+                tcp.src_port, tcp.dst_port, tcp.flags.bits()
             ),
             Some(Transport::Udp(udp)) => {
                 println!("    udp {} -> {}", udp.src_port, udp.dst_port)
