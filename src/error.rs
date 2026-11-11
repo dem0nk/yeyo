@@ -23,7 +23,7 @@ impl fmt::Display for Layer {
             Layer::Arp => "ARP",
             Layer::Ipv4 => "IPv4",
             Layer::Ipv6 => "IPv6",
-            Layer::Ipv6Extension => "IPv6 extension header",
+            Layer::Ipv6Extension => "IPv6 extension",
             Layer::Tcp => "TCP",
             Layer::Udp => "UDP",
             Layer::Icmp => "ICMP",
