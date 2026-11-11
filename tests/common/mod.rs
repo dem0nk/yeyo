@@ -30,3 +30,10 @@ pub fn udp(src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(payload);
     bytes
 }
+
+pub fn vlan_tag(id: u16, ethertype: u16, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = id.to_be_bytes().to_vec();
+    bytes.extend_from_slice(&ethertype.to_be_bytes());
+    bytes.extend_from_slice(payload);
+    bytes
+}

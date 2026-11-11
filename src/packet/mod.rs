@@ -30,7 +30,7 @@ pub struct Packet {
 impl Packet {
     pub fn parse(bytes: &[u8]) -> Result<Packet, YeyoError> {
         let eth = EthernetHeader::parse(bytes)?;
-        let after_eth = &bytes[ethernet::HEADER_LEN..];
+        let after_eth = &bytes[eth.header_len..];
 
         let (ip, protocol, ip_len) = match eth.ethertype {
             0x86dd => {
