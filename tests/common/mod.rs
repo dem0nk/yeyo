@@ -1,5 +1,18 @@
 #![allow(dead_code)]
 
+use std::net::Ipv6Addr;
+pub fn ipv6(next_header: u8, src: Ipv6Addr, dst: Ipv6Addr, payload: &[u8]) -> Vec<u8> {
+    let payload_length = payload.len() as u16;
+    let mut bytes = vec![0x60, 0x00, 0x00, 0x00];
+    bytes.extend_from_slice(&payload_length.to_be_bytes());
+    bytes.push(next_header);
+    bytes.push(64);
+    bytes.extend_from_slice(&src.octets());
+    bytes.extend_from_slice(&dst.octets());
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
 pub fn ethernet(ethertype: u16, payload: &[u8]) -> Vec<u8> {
     let mut bytes = vec![
         0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,

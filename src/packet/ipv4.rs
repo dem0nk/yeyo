@@ -4,11 +4,19 @@ use crate::error::{Layer, YeyoError};
 
 const MIN_HEADER_LEN: usize = 20;
 const VERSION: u8 = 4;
+const DONT_FRAGMENT: u16 = 0x4000;
+const MORE_FRAGMENTS: u16 = 0x2000;
+const OFFSET_MASK: u16 = 0x1fff;
+const OFFSET_UNIT: u16 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ipv4Header {
     pub header_len: usize,
     pub total_length: u16,
+    pub identification: u16,
+    pub dont_fragment: bool,
+    pub more_fragments: bool,
+    pub fragment_offset: u16,
     pub ttl: u8,
     pub protocol: u8,
     pub src: Ipv4Addr,
@@ -58,9 +66,15 @@ impl Ipv4Header {
             });
         }
 
+        let flags_and_offset = u16::from_be_bytes([bytes[6], bytes[7]]);
+
         Ok(Ipv4Header {
             header_len,
             total_length,
+            identification: u16::from_be_bytes([bytes[4], bytes[5]]),
+            dont_fragment: flags_and_offset & DONT_FRAGMENT != 0,
+            more_fragments: flags_and_offset & MORE_FRAGMENTS != 0,
+            fragment_offset: (flags_and_offset & OFFSET_MASK) * OFFSET_UNIT,
             ttl: bytes[8],
             protocol: bytes[9],
             src: Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]),

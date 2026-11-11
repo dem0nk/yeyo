@@ -1,4 +1,3 @@
-use std::net::Ipv6Addr;
 use std::process::ExitCode;
 use yeyo::error::YeyoError;
 use yeyo::packet::{IpHeader, Packet, Transport};
@@ -30,9 +29,7 @@ fn run() -> Result<(), YeyoError> {
         };
 
         match &pkt.ip {
-            Some(IpHeader::V6(ip)) => {
-                println!("{} -> {}", Ipv6Addr::from(ip.src), Ipv6Addr::from(ip.dst))
-            }
+            Some(IpHeader::V6(ip)) => println!("{} -> {}", ip.src, ip.dst),
             Some(IpHeader::V4(ip)) => println!("{} -> {}", ip.src, ip.dst),
             None => {}
         }

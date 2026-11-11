@@ -36,14 +36,22 @@ impl Packet {
             0x86dd => {
                 let h = Ipv6Header::parse(after_eth)?;
                 let proto = h.next_header;
-                (IpHeader::V6(h), proto, 40)
+                (IpHeader::V6(h), proto, ipv6::HEADER_LEN)
             }
             0x0800 => {
                 let h = Ipv4Header::parse(after_eth)?;
+                if h.fragment_offset > 0 {
+                    return Ok(Packet {
+                        eth,
+                        ip: Some(IpHeader::V4(h)),
+                        transport: None,
+                    });
+                }
                 let proto = h.protocol;
                 let len = h.header_len;
                 (IpHeader::V4(h), proto, len)
             }
+
             _ => {
                 return Ok(Packet {
                     eth,

@@ -48,10 +48,6 @@ pub enum YeyoError {
         needed: usize,
         got: usize,
     },
-    BadIpVersion {
-        expected: u8,
-        got: u8,
-    },
 }
 
 impl fmt::Display for YeyoError {
@@ -72,9 +68,6 @@ impl fmt::Display for YeyoError {
             }
             YeyoError::PacketTooShort { needed, got } => {
                 write!(f, "packet too short: needed {needed} bytes, got {got}")
-            }
-            YeyoError::BadIpVersion { expected, got } => {
-                write!(f, "bad IP version: expected {expected}, got {got}")
             }
         }
     }

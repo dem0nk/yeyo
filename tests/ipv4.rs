@@ -26,6 +26,10 @@ fn test_parse_minimal_header_ok() -> Result<(), Box<dyn Error>> {
         Ipv4Header {
             header_len: 20,
             total_length: 24,
+            identification: 0,
+            dont_fragment: false,
+            more_fragments: false,
+            fragment_offset: 0,
             ttl: 64,
             protocol: 17,
             src: Ipv4Addr::new(192, 168, 1, 2),
@@ -110,4 +114,32 @@ fn test_parse_total_length_too_small_err() {
         Ipv4Header::parse(&bytes),
         malformed("total length 16, smaller than header length 20")
     );
+}
+
+#[test]
+fn test_parse_fragment_fields_ok() -> Result<(), Box<dyn Error>> {
+    let mut bytes = common::ipv4(17, SRC, DST, &[]);
+    bytes[4..6].copy_from_slice(&0x1234u16.to_be_bytes());
+    bytes[6..8].copy_from_slice(&0x20b9u16.to_be_bytes());
+
+    let ip = Ipv4Header::parse(&bytes)?;
+
+    assert_eq!(ip.identification, 0x1234);
+    assert!(ip.more_fragments);
+    assert!(!ip.dont_fragment);
+    assert_eq!(ip.fragment_offset, 1480);
+    Ok(())
+}
+
+#[test]
+fn test_parse_dont_fragment_ok() -> Result<(), Box<dyn Error>> {
+    let mut bytes = common::ipv4(17, SRC, DST, &[]);
+    bytes[6..8].copy_from_slice(&0x4000u16.to_be_bytes());
+
+    let ip = Ipv4Header::parse(&bytes)?;
+
+    assert!(ip.dont_fragment);
+    assert!(!ip.more_fragments);
+    assert_eq!(ip.fragment_offset, 0);
+    Ok(())
 }
