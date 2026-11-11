@@ -2,6 +2,7 @@ mod common;
 
 use std::error::Error;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use yeyo::error::{Layer, YeyoError};
 use yeyo::packet::{IpHeader, Packet, Transport};
 
 #[test]
@@ -77,4 +78,45 @@ fn test_parse_ipv6_udp_ok() -> Result<(), Box<dyn Error>> {
     }
     assert!(matches!(pkt.transport, Some(Transport::Udp(_))));
     Ok(())
+}
+
+#[test]
+fn test_parse_ipv6_hop_by_hop_udp_ok() -> Result<(), Box<dyn Error>> {
+    let src = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+    let dst = Ipv6Addr::new(0x2606, 0x4700, 0, 0, 0, 0, 0, 0x1111);
+    let hbh = common::ipv6_ext(17, &common::udp(54321, 53, &[]));
+    let bytes = common::ethernet(0x86dd, &common::ipv6(0, src, dst, &hbh));
+
+    let pkt = Packet::parse(&bytes)?;
+
+    assert!(matches!(pkt.transport, Some(Transport::Udp(_))));
+    Ok(())
+}
+
+#[test]
+fn test_parse_ipv6_later_fragment_has_no_transport_ok() -> Result<(), Box<dyn Error>> {
+    let src = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+    let dst = Ipv6Addr::new(0x2606, 0x4700, 0, 0, 0, 0, 0, 0x1111);
+    let frag = common::ipv6_fragment(17, 1448, false, 7, &[0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 0]);
+    let bytes = common::ethernet(0x86dd, &common::ipv6(44, src, dst, &frag));
+
+    let pkt = Packet::parse(&bytes)?;
+
+    assert!(matches!(pkt.ip, Some(IpHeader::V6(_))));
+    assert!(pkt.transport.is_none());
+    Ok(())
+}
+
+#[test]
+fn test_parse_truncated_ipv6_propagates_err() {
+    let bytes = common::ethernet(0x86dd, &[0x60; 20]);
+
+    assert_eq!(
+        Packet::parse(&bytes).err(),
+        Some(YeyoError::Truncated {
+            layer: Layer::Ipv6,
+            needed: 40,
+            got: 20
+        })
+    );
 }

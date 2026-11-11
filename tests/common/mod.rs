@@ -13,6 +13,21 @@ pub fn ipv6(next_header: u8, src: Ipv6Addr, dst: Ipv6Addr, payload: &[u8]) -> Ve
     bytes
 }
 
+pub fn ipv6_ext(next_header: u8, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![next_header, 0, 0, 0, 0, 0, 0, 0];
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+pub fn ipv6_fragment(next_header: u8, offset: u16, more: bool, id: u32, payload: &[u8]) -> Vec<u8> {
+    let field = offset | u16::from(more);
+    let mut bytes = vec![next_header, 0];
+    bytes.extend_from_slice(&field.to_be_bytes());
+    bytes.extend_from_slice(&id.to_be_bytes());
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
 pub fn ethernet(ethertype: u16, payload: &[u8]) -> Vec<u8> {
     let mut bytes = vec![
         0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
