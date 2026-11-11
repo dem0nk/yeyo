@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv6Addr;
 use std::process::ExitCode;
 use yeyo::error::YeyoError;
 use yeyo::packet::{IpHeader, Packet, Transport};
@@ -33,9 +33,7 @@ fn run() -> Result<(), YeyoError> {
             Some(IpHeader::V6(ip)) => {
                 println!("{} -> {}", Ipv6Addr::from(ip.src), Ipv6Addr::from(ip.dst))
             }
-            Some(IpHeader::V4(ip)) => {
-                println!("{} -> {}", Ipv4Addr::from(ip.src), Ipv4Addr::from(ip.dst))
-            }
+            Some(IpHeader::V4(ip)) => println!("{} -> {}", ip.src, ip.dst),
             None => {}
         }
 

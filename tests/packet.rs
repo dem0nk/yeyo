@@ -1,6 +1,7 @@
 mod common;
 
 use std::error::Error;
+use std::net::Ipv4Addr;
 use yeyo::packet::{IpHeader, Packet, Transport};
 
 #[test]
@@ -13,8 +14,8 @@ fn test_parse_ipv4_udp_ok() -> Result<(), Box<dyn Error>> {
 
     match pkt.ip {
         Some(IpHeader::V4(ip)) => {
-            assert_eq!(ip.src, [192, 168, 1, 2]);
-            assert_eq!(ip.dst, [8, 8, 8, 8]);
+            assert_eq!(ip.src, Ipv4Addr::new(192, 168, 1, 2));
+            assert_eq!(ip.dst, Ipv4Addr::new(8, 8, 8, 8));
             assert_eq!(ip.protocol, 17);
         }
         _ => panic!("expected IPv4"),
