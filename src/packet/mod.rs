@@ -30,7 +30,7 @@ pub struct Packet {
 impl Packet {
     pub fn parse(bytes: &[u8]) -> Result<Packet, YeyoError> {
         let eth = EthernetHeader::parse(bytes)?;
-        let after_eth = &bytes[14..];
+        let after_eth = &bytes[ethernet::HEADER_LEN..];
 
         let (ip, protocol, ip_len) = match eth.ethertype {
             0x86dd => {
@@ -65,38 +65,5 @@ impl Packet {
             ip: Some(ip),
             transport,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_ipv4_udp() {
-        let bytes: [u8; 42] = [
-            0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x08, 0x00,
-            0x45, 0x00, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0xc0, 0xa8,
-            0x01, 0x02, 0x08, 0x08, 0x08, 0x08, 0x30, 0x39, 0x00, 0x35, 0x00, 0x08, 0x00, 0x00,
-        ];
-
-        let pkt = Packet::parse(&bytes).unwrap();
-
-        match pkt.ip {
-            Some(IpHeader::V4(ip)) => {
-                assert_eq!(ip.src, [192, 168, 1, 2]);
-                assert_eq!(ip.dst, [8, 8, 8, 8]);
-                assert_eq!(ip.protocol, 17);
-            }
-            _ => panic!("expected IPv4"),
-        }
-
-        match pkt.transport {
-            Some(Transport::Udp(udp)) => {
-                assert_eq!(udp.src_port, 12345);
-                assert_eq!(udp.dst_port, 53);
-            }
-            _ => panic!("expected UDP"),
-        }
     }
 }

@@ -1,5 +1,8 @@
-use crate::error::YeyoError;
+use crate::error::{Layer, YeyoError};
 
+pub(crate) const HEADER_LEN: usize = 14;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EthernetHeader {
     pub dst_mac: [u8; 6],
     pub src_mac: [u8; 6],
@@ -8,9 +11,10 @@ pub struct EthernetHeader {
 
 impl EthernetHeader {
     pub fn parse(bytes: &[u8]) -> Result<EthernetHeader, YeyoError> {
-        if bytes.len() < 14 {
-            return Err(YeyoError::PacketTooShort {
-                needed: 14,
+        if bytes.len() < HEADER_LEN {
+            return Err(YeyoError::Truncated {
+                layer: Layer::Ethernet,
+                needed: HEADER_LEN,
                 got: bytes.len(),
             });
         }
