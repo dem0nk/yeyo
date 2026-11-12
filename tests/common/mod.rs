@@ -79,3 +79,9 @@ pub fn vlan_tag(id: u16, ethertype: u16, payload: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(payload);
     bytes
 }
+
+pub fn loopback(family: u32, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = family.to_le_bytes().to_vec();
+    bytes.extend_from_slice(payload);
+    bytes
+}

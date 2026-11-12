@@ -1,5 +1,6 @@
 use std::process::ExitCode;
 use yeyo::error::YeyoError;
+use yeyo::packet::link::LinkType;
 use yeyo::packet::{IpHeader, Packet, Transport};
 
 fn main() -> ExitCode {
@@ -17,10 +18,12 @@ fn run() -> Result<(), YeyoError> {
         .immediate_mode(true)
         .open()?;
 
+    let link_type = LinkType::try_from(cap.get_datalink().0)?;
+
     loop {
         let raw = cap.next_packet()?;
 
-        let pkt = match Packet::parse(raw.data) {
+        let pkt = match Packet::parse(link_type, raw.data) {
             Ok(pkt) => pkt,
             Err(e) => {
                 println!("bad packet: {e}");
@@ -37,7 +40,9 @@ fn run() -> Result<(), YeyoError> {
         match &pkt.transport {
             Some(Transport::Tcp(tcp)) => println!(
                 "    tcp {} -> {} flags={:08b}",
-                tcp.src_port, tcp.dst_port, tcp.flags.bits()
+                tcp.src_port,
+                tcp.dst_port,
+                tcp.flags.bits()
             ),
             Some(Transport::Udp(udp)) => {
                 println!("    udp {} -> {}", udp.src_port, udp.dst_port)
