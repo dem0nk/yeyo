@@ -153,3 +153,18 @@ fn test_parse_truncated_tcp_propagates_err() {
         })
     );
 }
+
+#[test]
+fn test_parse_truncated_udp_propagates_err() {
+    let ip_bytes = common::ipv4(17, [192, 168, 1, 2], [8, 8, 8, 8], &[0; 4]);
+    let bytes = common::ethernet(0x0800, &ip_bytes);
+
+    assert_eq!(
+        Packet::parse(&bytes).err(),
+        Some(YeyoError::Truncated {
+            layer: Layer::Udp,
+            needed: 8,
+            got: 4
+        })
+    );
+}

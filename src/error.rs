@@ -44,10 +44,6 @@ pub enum YeyoError {
         layer: Layer,
         reason: String,
     },
-    PacketTooShort {
-        needed: usize,
-        got: usize,
-    },
 }
 
 impl fmt::Display for YeyoError {
@@ -65,9 +61,6 @@ impl fmt::Display for YeyoError {
             }
             YeyoError::Malformed { layer, reason } => {
                 write!(f, "malformed {layer} header: {reason}")
-            }
-            YeyoError::PacketTooShort { needed, got } => {
-                write!(f, "packet too short: needed {needed} bytes, got {got}")
             }
         }
     }
