@@ -40,7 +40,7 @@ impl Capture {
     }
 
     pub fn file(path: &Path) -> Result<Self, YeyoError> {
-        let handle = pcap::Capture::from_file(path)?;
+        let handle = pcap::Capture::from_file(utf8(path)?)?;
         Ok(Capture {
             handle: handle.into(),
         })
@@ -66,4 +66,9 @@ fn is_usable(d: &Device) -> bool {
         && d.flags.is_running()
         && !d.flags.is_loopback()
         && d.flags.connection_status == ConnectionStatus::Connected
+}
+
+fn utf8(path: &Path) -> Result<&str, YeyoError> {
+    path.to_str()
+        .ok_or_else(|| YeyoError::InvalidPath(path.to_path_buf()))
 }

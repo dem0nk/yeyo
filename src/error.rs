@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
@@ -45,6 +45,7 @@ pub enum YeyoError {
         reason: String,
     },
     NoDevice,
+    InvalidPath(PathBuf),
 }
 
 impl fmt::Display for YeyoError {
@@ -64,6 +65,9 @@ impl fmt::Display for YeyoError {
                 write!(f, "malformed {layer} header: {reason}")
             }
             YeyoError::NoDevice => f.write_str("no capture device found"),
+            YeyoError::InvalidPath(path) => {
+                write!(f, "path is not valid UTF-8: {}", path.display())
+            }
         }
     }
 }

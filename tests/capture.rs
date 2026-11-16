@@ -216,3 +216,14 @@ fn test_file_truncated_record_err() -> Result<(), Box<dyn Error>> {
     assert!(result.is_err());
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn test_file_non_utf8_path_err() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let path = Path::new(OsStr::from_bytes(b"/tmp/\xff.pcap"));
+    let result = Capture::file(path);
+    assert!(matches!(result, Err(YeyoError::InvalidPath(_))));
+}
