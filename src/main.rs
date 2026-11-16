@@ -1,10 +1,26 @@
+use clap::Parser;
+use std::path::PathBuf;
 use std::process::ExitCode;
+use yeyo::capture::{self, Capture};
 use yeyo::error::YeyoError;
 use yeyo::packet::link::LinkType;
 use yeyo::packet::{IpHeader, Packet, Transport};
 
+/// Live packet sniffer with a peek view
+#[derive(Parser)]
+#[command(version, about)]
+struct Args {
+    /// Interface to capture on (e.g. en0)
+    #[arg(short, long)]
+    interface: Option<String>,
+    /// Read packets from a .pcap file instead of a live interface
+    #[arg(short, long, conflicts_with = "interface")]
+    read: Option<PathBuf>,
+}
+
 fn main() -> ExitCode {
-    match run() {
+    let args = Args::parse();
+    match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("yeyo: {e}");
@@ -13,17 +29,16 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), YeyoError> {
-    let mut cap = pcap::Capture::from_device("en0")?
-        .immediate_mode(true)
-        .open()?;
+fn run(args: &Args) -> Result<(), YeyoError> {
+    let mut cap = match &args.read {
+        Some(path) => Capture::file(path)?,
+        None => Capture::live(capture::device(args.interface.as_deref())?)?,
+    };
 
-    let link_type = LinkType::try_from(cap.get_datalink().0)?;
+    let link_type = LinkType::try_from(cap.link_type())?;
 
-    loop {
-        let raw = cap.next_packet()?;
-
-        let pkt = match Packet::parse(link_type, raw.data) {
+    while let Some(frame) = cap.next_frame()? {
+        let pkt = match Packet::parse(link_type, &frame.data) {
             Ok(pkt) => pkt,
             Err(e) => {
                 println!("bad packet: {e}");
@@ -50,4 +65,5 @@ fn run() -> Result<(), YeyoError> {
             None => {}
         }
     }
+    Ok(())
 }

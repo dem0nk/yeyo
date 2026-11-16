@@ -58,3 +58,8 @@ fn test_display_unsupported_link_type_ok() {
     let err = YeyoError::UnsupportedLinkType(999);
     assert_eq!(err.to_string(), "unsupported link type 999");
 }
+
+#[test]
+fn test_display_no_device_ok() {
+    assert_eq!(YeyoError::NoDevice.to_string(), "no capture device found");
+}

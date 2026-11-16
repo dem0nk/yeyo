@@ -44,6 +44,7 @@ pub enum YeyoError {
         layer: Layer,
         reason: String,
     },
+    NoDevice,
 }
 
 impl fmt::Display for YeyoError {
@@ -62,6 +63,7 @@ impl fmt::Display for YeyoError {
             YeyoError::Malformed { layer, reason } => {
                 write!(f, "malformed {layer} header: {reason}")
             }
+            YeyoError::NoDevice => f.write_str("no capture device found"),
         }
     }
 }

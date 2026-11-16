@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use std::net::Ipv6Addr;
+use std::path::PathBuf;
+
 pub fn ipv6(next_header: u8, src: Ipv6Addr, dst: Ipv6Addr, payload: &[u8]) -> Vec<u8> {
     let payload_length = payload.len() as u16;
     let mut bytes = vec![0x60, 0x00, 0x00, 0x00];
@@ -84,4 +86,32 @@ pub fn loopback(family: u32, payload: &[u8]) -> Vec<u8> {
     let mut bytes = family.to_le_bytes().to_vec();
     bytes.extend_from_slice(payload);
     bytes
+}
+
+pub fn pcap_header(link_type: u32) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(&0xa1b2c3d4u32.to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&4u16.to_le_bytes());
+    b.extend_from_slice(&0i32.to_le_bytes());
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&262_144u32.to_le_bytes());
+    b.extend_from_slice(&link_type.to_le_bytes());
+    b
+}
+
+pub fn pcap_record(data: &[u8], orig_len: u32) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(&1u32.to_le_bytes());
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    b.extend_from_slice(&orig_len.to_le_bytes());
+    b.extend_from_slice(data);
+    b
+}
+
+pub fn temp_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let path = std::env::temp_dir().join(format!("yeyo-test-{name}.pcap"));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
 }
