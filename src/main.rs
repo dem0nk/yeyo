@@ -16,6 +16,9 @@ struct Args {
     /// Read packets from a .pcap file instead of a live interface
     #[arg(short, long, conflicts_with = "interface")]
     read: Option<PathBuf>,
+    /// Save every captured packet to a .pcap file
+    #[arg(short, long)]
+    write: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -34,6 +37,10 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         Some(path) => Capture::file(path)?,
         None => Capture::live(capture::device(args.interface.as_deref())?)?,
     };
+
+    if let Some(path) = &args.write {
+        cap.save_to(path)?;
+    }
 
     let link_type = LinkType::try_from(cap.link_type())?;
 
@@ -65,5 +72,6 @@ fn run(args: &Args) -> Result<(), YeyoError> {
             None => {}
         }
     }
+    cap.finish()?;
     Ok(())
 }

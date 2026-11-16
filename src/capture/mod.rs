@@ -1,13 +1,16 @@
 use crate::error::YeyoError;
 use pcap::{Activated, ConnectionStatus, Device};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const SNAPLEN: i32 = 262_144;
 
 pub struct Capture {
     handle: pcap::Capture<dyn Activated>,
+    save: Option<pcap::Savefile>,
+    source: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub data: Vec<u8>,
     pub len: u32,
@@ -21,6 +24,8 @@ impl Capture {
             .open()?;
         Ok(Capture {
             handle: handle.into(),
+            save: None,
+            source: None,
         })
     }
 
@@ -30,10 +35,15 @@ impl Capture {
 
     pub fn next_frame(&mut self) -> Result<Option<Frame>, YeyoError> {
         match self.handle.next_packet() {
-            Ok(packet) => Ok(Some(Frame {
-                data: packet.data.to_vec(),
-                len: packet.header.len,
-            })),
+            Ok(packet) => {
+                if let Some(save) = &mut self.save {
+                    save.write(&packet);
+                }
+                Ok(Some(Frame {
+                    data: packet.data.to_vec(),
+                    len: packet.header.len,
+                }))
+            }
             Err(pcap::Error::NoMorePackets) => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -43,7 +53,26 @@ impl Capture {
         let handle = pcap::Capture::from_file(utf8(path)?)?;
         Ok(Capture {
             handle: handle.into(),
+            save: None,
+            source: Some(path.to_path_buf()),
         })
+    }
+
+    pub fn save_to(&mut self, path: &Path) -> Result<(), YeyoError> {
+        if let Some(source) = &self.source
+            && same_file::is_same_file(source, path).unwrap_or(false)
+        {
+            return Err(YeyoError::SameFile(path.to_path_buf()));
+        }
+        self.save = Some(self.handle.savefile(utf8(path)?)?);
+        Ok(())
+    }
+
+    pub fn finish(&mut self) -> Result<(), YeyoError> {
+        if let Some(save) = &mut self.save {
+            save.flush()?;
+        }
+        Ok(())
     }
 }
 

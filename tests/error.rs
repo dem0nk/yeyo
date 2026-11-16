@@ -69,3 +69,12 @@ fn test_display_invalid_path_ok() {
     let err = YeyoError::InvalidPath(std::path::PathBuf::from("/tmp/x.pcap"));
     assert_eq!(err.to_string(), "path is not valid UTF-8: /tmp/x.pcap");
 }
+
+#[test]
+fn test_display_same_file_ok() {
+    let err = YeyoError::SameFile(std::path::PathBuf::from("a.pcap"));
+    assert_eq!(
+        err.to_string(),
+        "refusing to overwrite the input file a.pcap"
+    );
+}

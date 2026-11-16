@@ -46,6 +46,7 @@ pub enum YeyoError {
     },
     NoDevice,
     InvalidPath(PathBuf),
+    SameFile(PathBuf),
 }
 
 impl fmt::Display for YeyoError {
@@ -67,6 +68,9 @@ impl fmt::Display for YeyoError {
             YeyoError::NoDevice => f.write_str("no capture device found"),
             YeyoError::InvalidPath(path) => {
                 write!(f, "path is not valid UTF-8: {}", path.display())
+            }
+            YeyoError::SameFile(path) => {
+                write!(f, "refusing to overwrite the input file {}", path.display())
             }
         }
     }
