@@ -1,9 +1,11 @@
 mod device;
 mod frame;
+mod options;
 mod stats;
 
 pub use device::{Interface, describe, device, first_connected, interfaces};
 pub use frame::Frame;
+pub use options::{MAX_SNAPLEN, Options};
 pub use stats::{KernelStats, Stats};
 
 use crate::error::YeyoError;
@@ -12,7 +14,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const SNAPLEN: i32 = 262_144;
 const READ_TIMEOUT_MS: i32 = 100;
 
 pub struct Capture {
@@ -33,14 +34,17 @@ impl Stop {
 }
 
 impl Capture {
-    pub fn live(device: Device) -> Result<Self, YeyoError> {
+    pub fn live(device: Device, options: &Options) -> Result<Self, YeyoError> {
         let name = device.name.clone();
-        let handle = pcap::Capture::from_device(device)?
-            .snaplen(SNAPLEN)
+        let mut inactive = pcap::Capture::from_device(device)?
+            .snaplen(options.snaplen_bytes())
+            .promisc(options.promisc)
             .timeout(READ_TIMEOUT_MS)
-            .immediate_mode(true)
-            .open()
-            .map_err(|e| open_error(&name, e))?;
+            .immediate_mode(true);
+        if let Some(bytes) = options.buffer_bytes() {
+            inactive = inactive.buffer_size(bytes);
+        }
+        let handle = inactive.open().map_err(|e| open_error(&name, e))?;
         Ok(Self::from_handle(handle.into(), None))
     }
 

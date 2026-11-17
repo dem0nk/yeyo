@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use yeyo::capture::{self, Capture};
+use yeyo::capture::{self, Capture, MAX_SNAPLEN, Options};
 use yeyo::error::YeyoError;
 use yeyo::packet::link::LinkType;
 use yeyo::packet::{IpHeader, Packet, Transport};
@@ -22,11 +22,34 @@ struct Args {
     /// Capture filter in BPF syntax (e.g. "tcp port 80")
     #[arg(short = 'f', long = "capture-filter")]
     capture_filter: Option<String>,
+    /// Keep only the first N bytes of each packet
+    #[arg(
+        short = 's',
+        long,
+        conflicts_with = "read",
+        value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_SNAPLEN))
+    )]
+    snaplen: Option<u32>,
+    /// Don't put the interface into promiscuous mode
+    #[arg(short = 'p', long = "no-promiscuous-mode", conflicts_with = "read")]
+    no_promisc: bool,
+    /// Kernel buffer size in KiB (raise it if packets are dropped by kernel)
+    #[arg(
+        short = 'B',
+        long = "buffer-size",
+        value_name = "KiB",
+        conflicts_with = "read",
+        value_parser = clap::value_parser!(u32).range(1..=2_097_151)
+    )]
+    buffer_size: Option<u32>,
     /// List capture interfaces and exit
     #[arg(
         short = 'D',
         long,
-        conflicts_with_all = ["interface", "read", "write", "capture_filter"]
+        conflicts_with_all = [
+            "interface", "read", "write", "capture_filter",
+            "snaplen", "no_promisc", "buffer_size",
+        ]
     )]
     list_interfaces: bool,
 }
@@ -50,9 +73,15 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         return Ok(());
     }
 
+    let options = Options {
+        snaplen: args.snaplen.unwrap_or(MAX_SNAPLEN),
+        promisc: !args.no_promisc,
+        buffer_kib: args.buffer_size,
+    };
+
     let mut cap = match &args.read {
         Some(path) => Capture::file(path)?,
-        None => Capture::live(capture::device(args.interface.as_deref())?)?,
+        None => Capture::live(capture::device(args.interface.as_deref())?, &options)?,
     };
 
     let link_type = LinkType::try_from(cap.link_type())?;

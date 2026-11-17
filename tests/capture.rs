@@ -3,7 +3,7 @@ mod common;
 use pcap::Device;
 use std::error::Error;
 use std::path::Path;
-use yeyo::capture::{Capture, Frame};
+use yeyo::capture::{Capture, Frame, Options};
 use yeyo::error::YeyoError;
 use yeyo::packet::link::LinkType;
 use yeyo::packet::{IpHeader, Packet, Transport};
@@ -386,7 +386,7 @@ fn test_live_without_privileges_is_permission_denied_err() {
         "lo"
     };
 
-    match Capture::live(Device::from(loopback)) {
+    match Capture::live(Device::from(loopback), &Options::default()) {
         Ok(_) => {}
         Err(e) => assert!(matches!(
             e,
@@ -397,7 +397,7 @@ fn test_live_without_privileges_is_permission_denied_err() {
 
 #[test]
 fn test_live_failure_names_the_device_err() {
-    let result = Capture::live(Device::from("yeyo-no-such-device"));
+    let result = Capture::live(Device::from("yeyo-no-such-device"), &Options::default());
     assert!(matches!(
         result,
         Err(YeyoError::Open { ref device, .. } | YeyoError::PermissionDenied { ref device, .. })
