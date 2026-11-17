@@ -1,5 +1,8 @@
+mod common;
+
 use std::error::Error;
-use std::process::{Command, Output};
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Output, Stdio};
 
 fn yeyo(args: &[&str]) -> std::io::Result<Output> {
     Command::new(env!("CARGO_BIN_EXE_yeyo")).args(args).output()
@@ -77,4 +80,31 @@ fn test_option_boundaries_accepted_ok() -> Result<(), Box<dyn Error>> {
     accepted(&[&dev[..], &["-B", "1"]].concat())?;
     accepted(&[&dev[..], &["-B", "2097151"]].concat())?;
     accepted(&[&dev[..], &["-p"]].concat())
+}
+
+#[test]
+fn test_closed_pipe_stops_quietly_ok() -> Result<(), Box<dyn Error>> {
+    let ip = common::ipv4(17, [10, 0, 0, 1], [10, 0, 0, 2], &common::udp(1, 2, &[]));
+    let mut bytes = common::pcap_header(101);
+    for _ in 0..100_000 {
+        bytes.extend(common::pcap_record(&ip, ip.len() as u32));
+    }
+    let path = common::temp_file("cli-closed-pipe", &bytes)?;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_yeyo"))
+        .arg("-r")
+        .arg(&path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut first = String::new();
+    BufReader::new(child.stdout.take().ok_or("no stdout")?).read_line(&mut first)?;
+    let out = child.wait_with_output()?;
+    std::fs::remove_file(&path)?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(first.contains("UDP"), "first line: {first}");
+    assert_eq!(out.status.code(), Some(0), "stderr: {stderr}");
+    assert!(stderr.contains("packets captured"), "stderr: {stderr}");
+    Ok(())
 }

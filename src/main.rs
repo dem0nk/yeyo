@@ -1,10 +1,12 @@
 use clap::Parser;
+use std::io::{self, ErrorKind};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use yeyo::capture::{self, Capture, MAX_SNAPLEN, Options};
 use yeyo::error::YeyoError;
+use yeyo::packet::Packet;
 use yeyo::packet::link::LinkType;
-use yeyo::packet::{IpHeader, Packet, Transport};
+use yeyo::render::Lines;
 
 /// Live packet sniffer with a peek view
 #[derive(Parser)]
@@ -97,35 +99,19 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         cap.save_to(path)?;
     }
 
+    let mut lines = Lines::new(io::stdout().lock());
     while let Some(frame) = cap.next_frame()? {
-        let pkt = match Packet::parse(link_type, &frame.data) {
-            Ok(pkt) => pkt,
-            Err(e) => {
-                println!("bad packet: {e}");
-                continue;
-            }
+        let written = match Packet::parse(link_type, &frame.data) {
+            Ok(packet) => lines.packet(frame.time, frame.len, &packet),
+            Err(e) => lines.bad(frame.time, frame.len, &e),
         };
-
-        match &pkt.ip {
-            Some(IpHeader::V6(ip)) => println!("{} -> {}", ip.src, ip.dst),
-            Some(IpHeader::V4(ip)) => println!("{} -> {}", ip.src, ip.dst),
-            None => {}
-        }
-
-        match &pkt.transport {
-            Some(Transport::Tcp(tcp)) => println!(
-                "    tcp {} -> {} flags={:08b}",
-                tcp.src_port,
-                tcp.dst_port,
-                tcp.flags.bits()
-            ),
-            Some(Transport::Udp(udp)) => {
-                println!("    udp {} -> {}", udp.src_port, udp.dst_port)
-            }
-            None => {}
+        match written {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::BrokenPipe => break,
+            Err(e) => return Err(YeyoError::Output(e.to_string())),
         }
     }
-    cap.finish()?;
+
     eprintln!("{}", cap.stats()?);
     Ok(())
 }

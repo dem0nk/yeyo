@@ -60,6 +60,7 @@ pub enum YeyoError {
         device: String,
         reason: String,
     },
+    Output(String),
 }
 
 impl fmt::Display for YeyoError {
@@ -99,6 +100,7 @@ impl fmt::Display for YeyoError {
                 "cannot open {device}: {reason}\n\
                  hint: capturing needs extra privileges; try running with sudo"
             ),
+            YeyoError::Output(reason) => write!(f, "cannot write output: {reason}"),
         }
     }
 }

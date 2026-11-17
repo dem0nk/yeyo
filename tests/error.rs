@@ -121,3 +121,9 @@ fn test_display_permission_denied_ok() {
          hint: capturing needs extra privileges; try running with sudo"
     );
 }
+
+#[test]
+fn test_display_output_ok() {
+    let err = YeyoError::Output(String::from("disk full"));
+    assert_eq!(err.to_string(), "cannot write output: disk full");
+}

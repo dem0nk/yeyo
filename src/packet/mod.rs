@@ -3,6 +3,7 @@ use ethernet::EthernetHeader;
 use ipv4::Ipv4Header;
 use ipv6::Ipv6Header;
 use link::LinkType;
+use std::net::IpAddr;
 use tcp::TcpHeader;
 use udp::UdpHeader;
 
@@ -128,24 +129,38 @@ impl<'a> Packet<'a> {
 }
 
 impl IpHeader {
-    fn header_len(&self) -> usize {
+    pub fn src(&self) -> IpAddr {
         match self {
-            IpHeader::V4(h) => h.header_len,
-            IpHeader::V6(h) => h.header_len,
+            IpHeader::V4(h) => IpAddr::V4(h.src),
+            IpHeader::V6(h) => IpAddr::V6(h.src),
         }
     }
 
-    fn protocol(&self) -> u8 {
+    pub fn dst(&self) -> IpAddr {
+        match self {
+            IpHeader::V4(h) => IpAddr::V4(h.dst),
+            IpHeader::V6(h) => IpAddr::V6(h.dst),
+        }
+    }
+
+    pub fn protocol(&self) -> u8 {
         match self {
             IpHeader::V4(h) => h.protocol,
             IpHeader::V6(h) => h.protocol,
         }
     }
 
-    fn is_later_fragment(&self) -> bool {
+    pub fn is_later_fragment(&self) -> bool {
         match self {
             IpHeader::V4(h) => h.fragment_offset > 0,
             IpHeader::V6(h) => h.fragment.is_some_and(|f| f.offset > 0),
+        }
+    }
+
+    fn header_len(&self) -> usize {
+        match self {
+            IpHeader::V4(h) => h.header_len,
+            IpHeader::V6(h) => h.header_len,
         }
     }
 
