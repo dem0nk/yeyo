@@ -97,5 +97,6 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         }
     }
     cap.finish()?;
+    eprintln!("{}", cap.stats()?);
     Ok(())
 }

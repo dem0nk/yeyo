@@ -1,8 +1,10 @@
 mod device;
 mod frame;
+mod stats;
 
 pub use device::{Interface, describe, device, first_connected, interfaces};
 pub use frame::Frame;
+pub use stats::{KernelStats, Stats};
 
 use crate::error::YeyoError;
 use pcap::{Activated, Device};
@@ -18,6 +20,7 @@ pub struct Capture {
     save: Option<pcap::Savefile>,
     source: Option<PathBuf>,
     stop: Arc<AtomicBool>,
+    captured: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +55,7 @@ impl Capture {
             save: None,
             source,
             stop: Arc::new(AtomicBool::new(false)),
+            captured: 0,
         }
     }
 
@@ -96,6 +100,7 @@ impl Capture {
                     if let Some(save) = &mut self.save {
                         save.write(&packet);
                     }
+                    self.captured += 1;
                     return Ok(Some(Frame::from_packet(&packet)));
                 }
                 Err(pcap::Error::TimeoutExpired) => continue,
@@ -103,6 +108,17 @@ impl Capture {
                 Err(e) => return Err(e.into()),
             }
         }
+    }
+
+    pub fn stats(&mut self) -> Result<Stats, YeyoError> {
+        let kernel = match self.source {
+            Some(_) => None,
+            None => Some(KernelStats::from_pcap(self.handle.stats()?)),
+        };
+        Ok(Stats {
+            captured: self.captured,
+            kernel,
+        })
     }
 
     pub fn finish(&mut self) -> Result<(), YeyoError> {
