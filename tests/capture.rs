@@ -550,3 +550,31 @@ fn test_time_negative_seconds_is_unknown_ok() -> Result<(), Box<dyn Error>> {
     assert_eq!(frame.data, vec![1, 2, 3]);
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn test_live_without_privileges_is_permission_denied_err() {
+    let loopback = if cfg!(target_os = "macos") {
+        "lo0"
+    } else {
+        "lo"
+    };
+
+    match Capture::live(Device::from(loopback)) {
+        Ok(_) => {}
+        Err(e) => assert!(matches!(
+            e,
+            YeyoError::PermissionDenied { ref device, .. } if device == loopback
+        )),
+    }
+}
+
+#[test]
+fn test_live_failure_names_the_device_err() {
+    let result = Capture::live(Device::from("yeyo-no-such-device"));
+    assert!(matches!(
+        result,
+        Err(YeyoError::Open { ref device, .. } | YeyoError::PermissionDenied { ref device, .. })
+            if device == "yeyo-no-such-device"
+    ));
+}

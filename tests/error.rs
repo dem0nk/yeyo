@@ -99,3 +99,25 @@ fn test_display_capture_filter_ok() {
         "invalid capture filter 'tcp prot 80': syntax error"
     );
 }
+
+#[test]
+fn test_display_open_ok() {
+    let err = YeyoError::Open {
+        device: String::from("nope"),
+        reason: String::from("No such device exists"),
+    };
+    assert_eq!(err.to_string(), "cannot open nope: No such device exists");
+}
+
+#[test]
+fn test_display_permission_denied_ok() {
+    let err = YeyoError::PermissionDenied {
+        device: String::from("en0"),
+        reason: String::from("/dev/bpf0: Permission denied"),
+    };
+    assert_eq!(
+        err.to_string(),
+        "cannot open en0: /dev/bpf0: Permission denied\n\
+         hint: capturing needs extra privileges; try running with sudo"
+    );
+}

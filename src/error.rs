@@ -52,6 +52,14 @@ pub enum YeyoError {
         expr: String,
         reason: String,
     },
+    Open {
+        device: String,
+        reason: String,
+    },
+    PermissionDenied {
+        device: String,
+        reason: String,
+    },
 }
 
 impl fmt::Display for YeyoError {
@@ -83,6 +91,14 @@ impl fmt::Display for YeyoError {
             YeyoError::CaptureFilter { expr, reason } => {
                 write!(f, "invalid capture filter '{expr}': {reason}")
             }
+            YeyoError::Open { device, reason } => {
+                write!(f, "cannot open {device}: {reason}")
+            }
+            YeyoError::PermissionDenied { device, reason } => write!(
+                f,
+                "cannot open {device}: {reason}\n\
+                 hint: capturing needs extra privileges; try running with sudo"
+            ),
         }
     }
 }

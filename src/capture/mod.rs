@@ -38,11 +38,13 @@ impl Stop {
 
 impl Capture {
     pub fn live(device: Device) -> Result<Self, YeyoError> {
+        let name = device.name.clone();
         let handle = pcap::Capture::from_device(device)?
             .snaplen(SNAPLEN)
             .timeout(READ_TIMEOUT_MS)
             .immediate_mode(true)
-            .open()?;
+            .open()
+            .map_err(|e| open_error(&name, e))?;
         Ok(Capture {
             handle: handle.into(),
             save: None,
@@ -132,4 +134,23 @@ fn timestamp(sec: impl TryInto<u64>, usec: impl TryInto<u64>) -> Option<SystemTi
     let sec = sec.try_into().ok()?;
     let usec = usec.try_into().ok().filter(|&us| us < MICROS_PER_SEC)?;
     UNIX_EPOCH.checked_add(Duration::from_secs(sec) + Duration::from_micros(usec))
+}
+
+fn open_error(device: &str, e: pcap::Error) -> YeyoError {
+    let device = device.to_string();
+    match e {
+        pcap::Error::PcapError(reason) if is_permission(&reason) => {
+            YeyoError::PermissionDenied { device, reason }
+        }
+        pcap::Error::PcapError(reason) => YeyoError::Open { device, reason },
+        other => YeyoError::Open {
+            device,
+            reason: other.to_string(),
+        },
+    }
+}
+
+fn is_permission(msg: &str) -> bool {
+    let msg = msg.to_lowercase();
+    msg.contains("permission") || msg.contains("not permitted")
 }
