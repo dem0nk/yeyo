@@ -47,6 +47,7 @@ pub enum YeyoError {
     NoDevice,
     InvalidPath(PathBuf),
     SameFile(PathBuf),
+    Signal(String),
 }
 
 impl fmt::Display for YeyoError {
@@ -71,6 +72,9 @@ impl fmt::Display for YeyoError {
             }
             YeyoError::SameFile(path) => {
                 write!(f, "refusing to overwrite the input file {}", path.display())
+            }
+            YeyoError::Signal(reason) => {
+                write!(f, "could not install Ctrl+C handler: {reason}")
             }
         }
     }

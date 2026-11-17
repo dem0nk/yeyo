@@ -1,13 +1,26 @@
 use crate::error::YeyoError;
 use pcap::{Activated, ConnectionStatus, Device};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const SNAPLEN: i32 = 262_144;
+const READ_TIMEOUT_MS: i32 = 100;
+
+#[derive(Debug, Clone)]
+pub struct Stop(Arc<AtomicBool>);
+
+impl Stop {
+    pub fn stop(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
 
 pub struct Capture {
     handle: pcap::Capture<dyn Activated>,
     save: Option<pcap::Savefile>,
     source: Option<PathBuf>,
+    stop: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,12 +33,14 @@ impl Capture {
     pub fn live(device: Device) -> Result<Self, YeyoError> {
         let handle = pcap::Capture::from_device(device)?
             .snaplen(SNAPLEN)
+            .timeout(READ_TIMEOUT_MS)
             .immediate_mode(true)
             .open()?;
         Ok(Capture {
             handle: handle.into(),
             save: None,
             source: None,
+            stop: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -33,19 +48,29 @@ impl Capture {
         self.handle.get_datalink().0
     }
 
+    pub fn stopper(&self) -> Stop {
+        Stop(Arc::clone(&self.stop))
+    }
+
     pub fn next_frame(&mut self) -> Result<Option<Frame>, YeyoError> {
-        match self.handle.next_packet() {
-            Ok(packet) => {
-                if let Some(save) = &mut self.save {
-                    save.write(&packet);
-                }
-                Ok(Some(Frame {
-                    data: packet.data.to_vec(),
-                    len: packet.header.len,
-                }))
+        loop {
+            if self.stop.load(Ordering::Relaxed) {
+                return Ok(None);
             }
-            Err(pcap::Error::NoMorePackets) => Ok(None),
-            Err(e) => Err(e.into()),
+            match self.handle.next_packet() {
+                Ok(packet) => {
+                    if let Some(save) = &mut self.save {
+                        save.write(&packet);
+                    }
+                    return Ok(Some(Frame {
+                        data: packet.data.to_vec(),
+                        len: packet.header.len,
+                    }));
+                }
+                Err(pcap::Error::TimeoutExpired) => continue,
+                Err(pcap::Error::NoMorePackets) => return Ok(None),
+                Err(e) => return Err(e.into()),
+            }
         }
     }
 
@@ -55,6 +80,7 @@ impl Capture {
             handle: handle.into(),
             save: None,
             source: Some(path.to_path_buf()),
+            stop: Arc::new(AtomicBool::new(false)),
         })
     }
 

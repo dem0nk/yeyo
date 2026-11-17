@@ -366,3 +366,52 @@ fn test_save_to_symlink_err() -> Result<(), Box<dyn Error>> {
     assert_eq!(still_there.len(), 2);
     Ok(())
 }
+
+#[test]
+fn test_stop_before_read_ends_capture_ok() -> Result<(), Box<dyn Error>> {
+    let input = common::temp_file("stop_before", &two_frames())?;
+
+    let mut cap = Capture::file(&input)?;
+    cap.stopper().stop();
+    let result = cap.next_frame()?;
+    std::fs::remove_file(&input)?;
+
+    assert!(result.is_none());
+    Ok(())
+}
+
+#[test]
+fn test_stop_mid_capture_saves_frames_so_far_ok() -> Result<(), Box<dyn Error>> {
+    let input = common::temp_file("stop_mid_in", &two_frames())?;
+    let output = std::env::temp_dir().join("yeyo-test-stop_mid_out.pcap");
+
+    let mut cap = Capture::file(&input)?;
+    cap.save_to(&output)?;
+    let first = cap.next_frame()?.ok_or("missing frame")?;
+    cap.stopper().stop();
+    let after_stop = cap.next_frame()?;
+    cap.finish()?;
+    let saved = read_all(&output)?;
+    std::fs::remove_file(&input)?;
+    std::fs::remove_file(&output)?;
+
+    assert!(after_stop.is_none());
+    assert_eq!(saved, vec![first]);
+    Ok(())
+}
+
+#[test]
+fn test_stop_from_another_thread_ok() -> Result<(), Box<dyn Error>> {
+    let input = common::temp_file("stop_thread", &two_frames())?;
+
+    let mut cap = Capture::file(&input)?;
+    let stop = cap.stopper();
+    std::thread::spawn(move || stop.stop())
+        .join()
+        .map_err(|_| "stop thread panicked")?;
+    let result = cap.next_frame()?;
+    std::fs::remove_file(&input)?;
+
+    assert!(result.is_none());
+    Ok(())
+}

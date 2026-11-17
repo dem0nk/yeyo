@@ -78,3 +78,12 @@ fn test_display_same_file_ok() {
         "refusing to overwrite the input file a.pcap"
     );
 }
+
+#[test]
+fn test_display_signal_ok() {
+    let err = YeyoError::Signal(String::from("already set"));
+    assert_eq!(
+        err.to_string(),
+        "could not install Ctrl+C handler: already set"
+    );
+}

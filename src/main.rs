@@ -42,6 +42,9 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         cap.save_to(path)?;
     }
 
+    let stop = cap.stopper();
+    ctrlc::set_handler(move || stop.stop()).map_err(|e| YeyoError::Signal(e.to_string()))?;
+
     let link_type = LinkType::try_from(cap.link_type())?;
 
     while let Some(frame) = cap.next_frame()? {
