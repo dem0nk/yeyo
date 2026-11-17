@@ -101,9 +101,13 @@ pub fn pcap_header(link_type: u32) -> Vec<u8> {
 }
 
 pub fn pcap_record(data: &[u8], orig_len: u32) -> Vec<u8> {
+    pcap_record_at(1, 0, data, orig_len)
+}
+
+pub fn pcap_record_at(sec: u32, usec: u32, data: &[u8], orig_len: u32) -> Vec<u8> {
     let mut b = Vec::new();
-    b.extend_from_slice(&1u32.to_le_bytes());
-    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&sec.to_le_bytes());
+    b.extend_from_slice(&usec.to_le_bytes());
     b.extend_from_slice(&(data.len() as u32).to_le_bytes());
     b.extend_from_slice(&orig_len.to_le_bytes());
     b.extend_from_slice(data);

@@ -3,9 +3,11 @@ use pcap::{Activated, ConnectionStatus, Device};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SNAPLEN: i32 = 262_144;
 const READ_TIMEOUT_MS: i32 = 100;
+const MICROS_PER_SEC: u64 = 1_000_000;
 
 #[derive(Debug, Clone)]
 pub struct Stop(Arc<AtomicBool>);
@@ -27,6 +29,7 @@ pub struct Capture {
 pub struct Frame {
     pub data: Vec<u8>,
     pub len: u32,
+    pub time: Option<SystemTime>,
 }
 
 impl Capture {
@@ -65,6 +68,7 @@ impl Capture {
                     return Ok(Some(Frame {
                         data: packet.data.to_vec(),
                         len: packet.header.len,
+                        time: timestamp(packet.header.ts.tv_sec, packet.header.ts.tv_usec),
                     }));
                 }
                 Err(pcap::Error::TimeoutExpired) => continue,
@@ -139,4 +143,10 @@ fn is_usable(d: &Device) -> bool {
 fn utf8(path: &Path) -> Result<&str, YeyoError> {
     path.to_str()
         .ok_or_else(|| YeyoError::InvalidPath(path.to_path_buf()))
+}
+
+fn timestamp(sec: impl TryInto<u64>, usec: impl TryInto<u64>) -> Option<SystemTime> {
+    let sec = sec.try_into().ok()?;
+    let usec = usec.try_into().ok().filter(|&us| us < MICROS_PER_SEC)?;
+    UNIX_EPOCH.checked_add(Duration::from_secs(sec) + Duration::from_micros(usec))
 }
