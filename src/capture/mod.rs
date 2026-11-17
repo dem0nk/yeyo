@@ -1,30 +1,23 @@
 mod device;
+mod frame;
 
 pub use device::{Interface, describe, device, first_connected, interfaces};
+pub use frame::Frame;
 
 use crate::error::YeyoError;
 use pcap::{Activated, Device};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SNAPLEN: i32 = 262_144;
 const READ_TIMEOUT_MS: i32 = 100;
-const MICROS_PER_SEC: u64 = 1_000_000;
 
 pub struct Capture {
     handle: pcap::Capture<dyn Activated>,
     save: Option<pcap::Savefile>,
     source: Option<PathBuf>,
     stop: Arc<AtomicBool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Frame {
-    pub data: Vec<u8>,
-    pub len: u32,
-    pub time: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone)]
@@ -45,22 +38,21 @@ impl Capture {
             .immediate_mode(true)
             .open()
             .map_err(|e| open_error(&name, e))?;
-        Ok(Capture {
-            handle: handle.into(),
-            save: None,
-            source: None,
-            stop: Arc::new(AtomicBool::new(false)),
-        })
+        Ok(Self::from_handle(handle.into(), None))
     }
 
     pub fn file(path: &Path) -> Result<Self, YeyoError> {
         let handle = pcap::Capture::from_file(utf8(path)?)?;
-        Ok(Capture {
-            handle: handle.into(),
+        Ok(Self::from_handle(handle.into(), Some(path.to_path_buf())))
+    }
+
+    fn from_handle(handle: pcap::Capture<dyn Activated>, source: Option<PathBuf>) -> Self {
+        Capture {
+            handle,
             save: None,
-            source: Some(path.to_path_buf()),
+            source,
             stop: Arc::new(AtomicBool::new(false)),
-        })
+        }
     }
 
     pub fn filter(&mut self, expr: &str) -> Result<(), YeyoError> {
@@ -104,11 +96,7 @@ impl Capture {
                     if let Some(save) = &mut self.save {
                         save.write(&packet);
                     }
-                    return Ok(Some(Frame {
-                        data: packet.data.to_vec(),
-                        len: packet.header.len,
-                        time: timestamp(packet.header.ts.tv_sec, packet.header.ts.tv_usec),
-                    }));
+                    return Ok(Some(Frame::from_packet(&packet)));
                 }
                 Err(pcap::Error::TimeoutExpired) => continue,
                 Err(pcap::Error::NoMorePackets) => return Ok(None),
@@ -128,12 +116,6 @@ impl Capture {
 fn utf8(path: &Path) -> Result<&str, YeyoError> {
     path.to_str()
         .ok_or_else(|| YeyoError::InvalidPath(path.to_path_buf()))
-}
-
-fn timestamp(sec: impl TryInto<u64>, usec: impl TryInto<u64>) -> Option<SystemTime> {
-    let sec = sec.try_into().ok()?;
-    let usec = usec.try_into().ok().filter(|&us| us < MICROS_PER_SEC)?;
-    UNIX_EPOCH.checked_add(Duration::from_secs(sec) + Duration::from_micros(usec))
 }
 
 fn open_error(device: &str, e: pcap::Error) -> YeyoError {

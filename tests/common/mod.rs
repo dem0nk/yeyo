@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 use std::net::Ipv6Addr;
+use std::path::Path;
 use std::path::PathBuf;
+use yeyo::capture::{Capture, Frame};
+use yeyo::error::YeyoError;
 
 pub fn ipv6(next_header: u8, src: Ipv6Addr, dst: Ipv6Addr, payload: &[u8]) -> Vec<u8> {
     let payload_length = payload.len() as u16;
@@ -118,4 +121,20 @@ pub fn temp_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("yeyo-test-{name}.pcap"));
     std::fs::write(&path, bytes)?;
     Ok(path)
+}
+
+pub fn two_frames() -> Vec<u8> {
+    let mut bytes = pcap_header(1);
+    bytes.extend(pcap_record(&[1, 2, 3], 3));
+    bytes.extend(pcap_record(&[4, 5], 2));
+    bytes
+}
+
+pub fn read_all(path: &Path) -> Result<Vec<Frame>, YeyoError> {
+    let mut cap = Capture::file(path)?;
+    let mut frames = Vec::new();
+    while let Some(frame) = cap.next_frame()? {
+        frames.push(frame);
+    }
+    Ok(frames)
 }

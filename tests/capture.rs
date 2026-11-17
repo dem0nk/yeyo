@@ -1,112 +1,12 @@
 mod common;
 
-use pcap::{ConnectionStatus, Device, DeviceFlags, IfFlags};
+use pcap::Device;
 use std::error::Error;
 use std::path::Path;
-use std::time::{Duration, UNIX_EPOCH};
-use yeyo::capture::{self, Capture, Frame, Interface};
+use yeyo::capture::{Capture, Frame};
 use yeyo::error::YeyoError;
 use yeyo::packet::link::LinkType;
 use yeyo::packet::{IpHeader, Packet, Transport};
-
-fn dev(name: &str, if_flags: IfFlags, status: ConnectionStatus) -> Device {
-    Device {
-        name: name.to_string(),
-        desc: None,
-        addresses: Vec::new(),
-        flags: DeviceFlags {
-            if_flags,
-            connection_status: status,
-        },
-    }
-}
-
-fn up() -> IfFlags {
-    IfFlags::UP | IfFlags::RUNNING
-}
-
-fn pick(devices: Vec<Device>) -> Result<String, YeyoError> {
-    capture::first_connected(devices).map(|d| d.name)
-}
-
-#[test]
-fn test_first_connected_skips_disconnected_ok() {
-    let devices = vec![
-        dev("ap1", up(), ConnectionStatus::Disconnected),
-        dev("en0", up(), ConnectionStatus::Connected),
-    ];
-    assert_eq!(pick(devices), Ok("en0".to_string()));
-}
-
-#[test]
-fn test_first_connected_keeps_list_order_ok() {
-    let devices = vec![
-        dev("en0", up(), ConnectionStatus::Connected),
-        dev("en1", up(), ConnectionStatus::Connected),
-    ];
-    assert_eq!(pick(devices), Ok("en0".to_string()));
-}
-
-#[test]
-fn test_first_connected_skips_loopback_ok() {
-    let devices = vec![
-        dev("lo0", up() | IfFlags::LOOPBACK, ConnectionStatus::Connected),
-        dev("en0", up(), ConnectionStatus::Connected),
-    ];
-    assert_eq!(pick(devices), Ok("en0".to_string()));
-}
-
-#[test]
-fn test_first_connected_skips_down_ok() {
-    let devices = vec![
-        dev("en0", IfFlags::RUNNING, ConnectionStatus::Connected),
-        dev("en1", up(), ConnectionStatus::Connected),
-    ];
-    assert_eq!(pick(devices), Ok("en1".to_string()));
-}
-
-#[test]
-fn test_first_connected_skips_not_running_ok() {
-    let devices = vec![
-        dev("en0", IfFlags::UP, ConnectionStatus::Connected),
-        dev("en1", up(), ConnectionStatus::Connected),
-    ];
-    assert_eq!(pick(devices), Ok("en1".to_string()));
-}
-
-#[test]
-fn test_first_connected_skips_unknown_status_ok() {
-    let devices = vec![
-        dev("utun0", up(), ConnectionStatus::Unknown),
-        dev("en0", up(), ConnectionStatus::Connected),
-    ];
-    assert_eq!(pick(devices), Ok("en0".to_string()));
-}
-
-#[test]
-fn test_first_connected_empty_list_err() {
-    assert_eq!(pick(Vec::new()), Err(YeyoError::NoDevice));
-}
-
-#[test]
-fn test_first_connected_none_usable_err() {
-    let devices = vec![
-        dev("ap1", up(), ConnectionStatus::Disconnected),
-        dev(
-            "lo0",
-            up() | IfFlags::LOOPBACK,
-            ConnectionStatus::NotApplicable,
-        ),
-    ];
-    assert_eq!(pick(devices), Err(YeyoError::NoDevice));
-}
-
-#[test]
-fn test_device_explicit_name_ok() -> Result<(), YeyoError> {
-    let device = capture::device(Some("nope"))?;
-    assert_eq!(device.name, "nope");
-    Ok(())
-}
 
 #[test]
 fn test_file_reads_frames_in_order_ok() -> Result<(), Box<dyn Error>> {
@@ -228,15 +128,6 @@ fn test_file_non_utf8_path_err() {
     assert!(matches!(result, Err(YeyoError::InvalidPath(_))));
 }
 
-fn read_all(path: &Path) -> Result<Vec<Frame>, YeyoError> {
-    let mut cap = Capture::file(path)?;
-    let mut frames = Vec::new();
-    while let Some(frame) = cap.next_frame()? {
-        frames.push(frame);
-    }
-    Ok(frames)
-}
-
 #[test]
 fn test_save_round_trip_ok() -> Result<(), Box<dyn Error>> {
     let mut bytes = common::pcap_header(1);
@@ -252,7 +143,7 @@ fn test_save_round_trip_ok() -> Result<(), Box<dyn Error>> {
         seen.push(frame);
     }
     cap.finish()?;
-    let saved = read_all(&output)?;
+    let saved = common::read_all(&output)?;
     let link = Capture::file(&output)?.link_type();
     std::fs::remove_file(&input)?;
     std::fs::remove_file(&output)?;
@@ -273,7 +164,7 @@ fn test_save_empty_capture_is_valid_file_ok() -> Result<(), Box<dyn Error>> {
     cap.save_to(&output)?;
     while cap.next_frame()?.is_some() {}
     cap.finish()?;
-    let saved = read_all(&output)?;
+    let saved = common::read_all(&output)?;
     std::fs::remove_file(&input)?;
     std::fs::remove_file(&output)?;
 
@@ -309,20 +200,13 @@ fn test_save_to_non_utf8_path_err() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn two_frames() -> Vec<u8> {
-    let mut bytes = common::pcap_header(1);
-    bytes.extend(common::pcap_record(&[1, 2, 3], 3));
-    bytes.extend(common::pcap_record(&[4, 5], 2));
-    bytes
-}
-
 #[test]
 fn test_save_to_same_path_err() -> Result<(), Box<dyn Error>> {
-    let input = common::temp_file("same_path", &two_frames())?;
+    let input = common::temp_file("same_path", &common::two_frames())?;
 
     let mut cap = Capture::file(&input)?;
     let result = cap.save_to(&input);
-    let still_there = read_all(&input)?;
+    let still_there = common::read_all(&input)?;
     std::fs::remove_file(&input)?;
 
     assert!(matches!(result, Err(YeyoError::SameFile(_))));
@@ -332,14 +216,14 @@ fn test_save_to_same_path_err() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn test_save_to_hard_link_err() -> Result<(), Box<dyn Error>> {
-    let input = common::temp_file("hard_link", &two_frames())?;
+    let input = common::temp_file("hard_link", &common::two_frames())?;
     let link = std::env::temp_dir().join("yeyo-test-hard_link-alias.pcap");
     let _ = std::fs::remove_file(&link);
     std::fs::hard_link(&input, &link)?;
 
     let mut cap = Capture::file(&input)?;
     let result = cap.save_to(&link);
-    let still_there = read_all(&input)?;
+    let still_there = common::read_all(&input)?;
     std::fs::remove_file(&input)?;
     std::fs::remove_file(&link)?;
 
@@ -351,14 +235,14 @@ fn test_save_to_hard_link_err() -> Result<(), Box<dyn Error>> {
 #[cfg(unix)]
 #[test]
 fn test_save_to_symlink_err() -> Result<(), Box<dyn Error>> {
-    let input = common::temp_file("symlink", &two_frames())?;
+    let input = common::temp_file("symlink", &common::two_frames())?;
     let link = std::env::temp_dir().join("yeyo-test-symlink-alias.pcap");
     let _ = std::fs::remove_file(&link);
     std::os::unix::fs::symlink(&input, &link)?;
 
     let mut cap = Capture::file(&input)?;
     let result = cap.save_to(&link);
-    let still_there = read_all(&input)?;
+    let still_there = common::read_all(&input)?;
     std::fs::remove_file(&input)?;
     std::fs::remove_file(&link)?;
 
@@ -369,7 +253,7 @@ fn test_save_to_symlink_err() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn test_stop_before_read_ends_capture_ok() -> Result<(), Box<dyn Error>> {
-    let input = common::temp_file("stop_before", &two_frames())?;
+    let input = common::temp_file("stop_before", &common::two_frames())?;
 
     let mut cap = Capture::file(&input)?;
     cap.stopper().stop();
@@ -382,7 +266,7 @@ fn test_stop_before_read_ends_capture_ok() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn test_stop_mid_capture_saves_frames_so_far_ok() -> Result<(), Box<dyn Error>> {
-    let input = common::temp_file("stop_mid_in", &two_frames())?;
+    let input = common::temp_file("stop_mid_in", &common::two_frames())?;
     let output = std::env::temp_dir().join("yeyo-test-stop_mid_out.pcap");
 
     let mut cap = Capture::file(&input)?;
@@ -391,7 +275,7 @@ fn test_stop_mid_capture_saves_frames_so_far_ok() -> Result<(), Box<dyn Error>> 
     cap.stopper().stop();
     let after_stop = cap.next_frame()?;
     cap.finish()?;
-    let saved = read_all(&output)?;
+    let saved = common::read_all(&output)?;
     std::fs::remove_file(&input)?;
     std::fs::remove_file(&output)?;
 
@@ -402,7 +286,7 @@ fn test_stop_mid_capture_saves_frames_so_far_ok() -> Result<(), Box<dyn Error>> 
 
 #[test]
 fn test_stop_from_another_thread_ok() -> Result<(), Box<dyn Error>> {
-    let input = common::temp_file("stop_thread", &two_frames())?;
+    let input = common::temp_file("stop_thread", &common::two_frames())?;
 
     let mut cap = Capture::file(&input)?;
     let stop = cap.stopper();
@@ -493,63 +377,6 @@ fn test_filter_wrong_link_type_err() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn time_of(name: &str, sec: u32, usec: u32) -> Result<Frame, Box<dyn Error>> {
-    let mut bytes = common::pcap_header(1);
-    bytes.extend(common::pcap_record_at(sec, usec, &[1, 2, 3], 3));
-    let input = common::temp_file(name, &bytes)?;
-    let frame = Capture::file(&input).and_then(|mut cap| cap.next_frame());
-    std::fs::remove_file(&input)?;
-    Ok(frame?.ok_or("missing frame")?)
-}
-
-#[test]
-fn test_time_read_ok() -> Result<(), Box<dyn Error>> {
-    let frame = time_of("time_read", 1_700_000_000, 123_456)?;
-    let expected = UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_000);
-    assert_eq!(frame.time, Some(expected));
-    Ok(())
-}
-
-#[test]
-fn test_time_epoch_ok() -> Result<(), Box<dyn Error>> {
-    let frame = time_of("time_epoch", 0, 0)?;
-    assert_eq!(frame.time, Some(UNIX_EPOCH));
-    Ok(())
-}
-
-#[test]
-fn test_time_max_valid_usec_ok() -> Result<(), Box<dyn Error>> {
-    let frame = time_of("time_max_usec", 5, 999_999)?;
-    assert_eq!(frame.time, Some(UNIX_EPOCH + Duration::new(5, 999_999_000)));
-    Ok(())
-}
-
-#[test]
-fn test_time_usec_overflow_is_unknown_ok() -> Result<(), Box<dyn Error>> {
-    let frame = time_of("time_bad_usec", 5, 1_000_000)?;
-    assert_eq!(frame.time, None);
-    assert_eq!(frame.data, vec![1, 2, 3]);
-    Ok(())
-}
-
-#[test]
-fn test_time_max_seconds_ok() -> Result<(), Box<dyn Error>> {
-    let frame = time_of("time_max_sec", 2_147_483_647, 0)?;
-    assert_eq!(
-        frame.time,
-        Some(UNIX_EPOCH + Duration::from_secs(2_147_483_647))
-    );
-    Ok(())
-}
-
-#[test]
-fn test_time_negative_seconds_is_unknown_ok() -> Result<(), Box<dyn Error>> {
-    let frame = time_of("time_neg_sec", u32::MAX, 0)?;
-    assert_eq!(frame.time, None);
-    assert_eq!(frame.data, vec![1, 2, 3]);
-    Ok(())
-}
-
 #[cfg(unix)]
 #[test]
 fn test_live_without_privileges_is_permission_denied_err() {
@@ -576,106 +403,4 @@ fn test_live_failure_names_the_device_err() {
         Err(YeyoError::Open { ref device, .. } | YeyoError::PermissionDenied { ref device, .. })
             if device == "yeyo-no-such-device"
     ));
-}
-
-fn names_and_defaults(list: &[Interface]) -> Vec<(&str, bool)> {
-    list.iter().map(|i| (i.name.as_str(), i.default)).collect()
-}
-
-#[test]
-fn test_describe_marks_first_usable_as_default_ok() {
-    let list = capture::describe(vec![
-        dev(
-            "ap1",
-            up() | IfFlags::WIRELESS,
-            ConnectionStatus::Disconnected,
-        ),
-        dev("en0", up() | IfFlags::WIRELESS, ConnectionStatus::Connected),
-        dev("en1", up(), ConnectionStatus::Connected),
-    ]);
-    assert_eq!(
-        names_and_defaults(&list),
-        vec![("ap1", false), ("en0", true), ("en1", false)]
-    );
-}
-
-#[test]
-fn test_describe_no_usable_has_no_default_ok() {
-    let list = capture::describe(vec![
-        dev("ap1", up(), ConnectionStatus::Disconnected),
-        dev(
-            "lo0",
-            up() | IfFlags::LOOPBACK,
-            ConnectionStatus::NotApplicable,
-        ),
-    ]);
-    assert!(list.iter().all(|i| !i.default));
-}
-
-#[test]
-fn test_describe_empty_ok() {
-    assert!(capture::describe(Vec::new()).is_empty());
-}
-
-#[test]
-fn test_labels_wireless_ok() {
-    let list = capture::describe(vec![
-        dev("en0", up() | IfFlags::WIRELESS, ConnectionStatus::Connected),
-        dev(
-            "ap1",
-            up() | IfFlags::WIRELESS,
-            ConnectionStatus::Disconnected,
-        ),
-    ]);
-    assert_eq!(
-        list[0].labels,
-        vec!["Up", "Running", "Wireless", "Associated"]
-    );
-    assert_eq!(
-        list[1].labels,
-        vec!["Up", "Running", "Wireless", "Not associated"]
-    );
-}
-
-#[test]
-fn test_labels_wired_and_loopback_ok() {
-    let list = capture::describe(vec![
-        dev("eth0", up(), ConnectionStatus::Connected),
-        dev("eth1", up(), ConnectionStatus::Disconnected),
-        dev(
-            "lo0",
-            up() | IfFlags::LOOPBACK,
-            ConnectionStatus::NotApplicable,
-        ),
-        dev("utun0", up(), ConnectionStatus::Unknown),
-        dev("down0", IfFlags::empty(), ConnectionStatus::Unknown),
-    ]);
-    assert_eq!(list[0].labels, vec!["Up", "Running", "Connected"]);
-    assert_eq!(list[1].labels, vec!["Up", "Running", "Disconnected"]);
-    assert_eq!(list[2].labels, vec!["Up", "Running", "Loopback"]);
-    assert_eq!(list[3].labels, vec!["Up", "Running"]);
-    assert!(list[4].labels.is_empty());
-}
-
-#[test]
-fn test_interface_display_full_ok() {
-    let mut d = dev("any", up(), ConnectionStatus::Connected);
-    d.desc = Some(String::from(
-        "Pseudo-device that captures on all interfaces",
-    ));
-    let list = capture::describe(vec![d]);
-    assert_eq!(
-        list[0].to_string(),
-        "any (Pseudo-device that captures on all interfaces) [Up, Running, Connected] (default)"
-    );
-}
-
-#[test]
-fn test_interface_display_bare_ok() {
-    let list = capture::describe(vec![dev(
-        "down0",
-        IfFlags::empty(),
-        ConnectionStatus::Unknown,
-    )]);
-    assert_eq!(list[0].to_string(), "down0");
 }
