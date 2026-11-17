@@ -1,6 +1,6 @@
 mod device;
 
-pub use device::{device, first_connected};
+pub use device::{Interface, describe, device, first_connected, interfaces};
 
 use crate::error::YeyoError;
 use pcap::{Activated, Device};

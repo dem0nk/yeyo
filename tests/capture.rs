@@ -4,8 +4,7 @@ use pcap::{ConnectionStatus, Device, DeviceFlags, IfFlags};
 use std::error::Error;
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
-use yeyo::capture;
-use yeyo::capture::{Capture, Frame};
+use yeyo::capture::{self, Capture, Frame, Interface};
 use yeyo::error::YeyoError;
 use yeyo::packet::link::LinkType;
 use yeyo::packet::{IpHeader, Packet, Transport};
@@ -577,4 +576,106 @@ fn test_live_failure_names_the_device_err() {
         Err(YeyoError::Open { ref device, .. } | YeyoError::PermissionDenied { ref device, .. })
             if device == "yeyo-no-such-device"
     ));
+}
+
+fn names_and_defaults(list: &[Interface]) -> Vec<(&str, bool)> {
+    list.iter().map(|i| (i.name.as_str(), i.default)).collect()
+}
+
+#[test]
+fn test_describe_marks_first_usable_as_default_ok() {
+    let list = capture::describe(vec![
+        dev(
+            "ap1",
+            up() | IfFlags::WIRELESS,
+            ConnectionStatus::Disconnected,
+        ),
+        dev("en0", up() | IfFlags::WIRELESS, ConnectionStatus::Connected),
+        dev("en1", up(), ConnectionStatus::Connected),
+    ]);
+    assert_eq!(
+        names_and_defaults(&list),
+        vec![("ap1", false), ("en0", true), ("en1", false)]
+    );
+}
+
+#[test]
+fn test_describe_no_usable_has_no_default_ok() {
+    let list = capture::describe(vec![
+        dev("ap1", up(), ConnectionStatus::Disconnected),
+        dev(
+            "lo0",
+            up() | IfFlags::LOOPBACK,
+            ConnectionStatus::NotApplicable,
+        ),
+    ]);
+    assert!(list.iter().all(|i| !i.default));
+}
+
+#[test]
+fn test_describe_empty_ok() {
+    assert!(capture::describe(Vec::new()).is_empty());
+}
+
+#[test]
+fn test_labels_wireless_ok() {
+    let list = capture::describe(vec![
+        dev("en0", up() | IfFlags::WIRELESS, ConnectionStatus::Connected),
+        dev(
+            "ap1",
+            up() | IfFlags::WIRELESS,
+            ConnectionStatus::Disconnected,
+        ),
+    ]);
+    assert_eq!(
+        list[0].labels,
+        vec!["Up", "Running", "Wireless", "Associated"]
+    );
+    assert_eq!(
+        list[1].labels,
+        vec!["Up", "Running", "Wireless", "Not associated"]
+    );
+}
+
+#[test]
+fn test_labels_wired_and_loopback_ok() {
+    let list = capture::describe(vec![
+        dev("eth0", up(), ConnectionStatus::Connected),
+        dev("eth1", up(), ConnectionStatus::Disconnected),
+        dev(
+            "lo0",
+            up() | IfFlags::LOOPBACK,
+            ConnectionStatus::NotApplicable,
+        ),
+        dev("utun0", up(), ConnectionStatus::Unknown),
+        dev("down0", IfFlags::empty(), ConnectionStatus::Unknown),
+    ]);
+    assert_eq!(list[0].labels, vec!["Up", "Running", "Connected"]);
+    assert_eq!(list[1].labels, vec!["Up", "Running", "Disconnected"]);
+    assert_eq!(list[2].labels, vec!["Up", "Running", "Loopback"]);
+    assert_eq!(list[3].labels, vec!["Up", "Running"]);
+    assert!(list[4].labels.is_empty());
+}
+
+#[test]
+fn test_interface_display_full_ok() {
+    let mut d = dev("any", up(), ConnectionStatus::Connected);
+    d.desc = Some(String::from(
+        "Pseudo-device that captures on all interfaces",
+    ));
+    let list = capture::describe(vec![d]);
+    assert_eq!(
+        list[0].to_string(),
+        "any (Pseudo-device that captures on all interfaces) [Up, Running, Connected] (default)"
+    );
+}
+
+#[test]
+fn test_interface_display_bare_ok() {
+    let list = capture::describe(vec![dev(
+        "down0",
+        IfFlags::empty(),
+        ConnectionStatus::Unknown,
+    )]);
+    assert_eq!(list[0].to_string(), "down0");
 }

@@ -22,6 +22,13 @@ struct Args {
     /// Capture filter in BPF syntax (e.g. "tcp port 80")
     #[arg(short = 'f', long = "capture-filter")]
     capture_filter: Option<String>,
+    /// List capture interfaces and exit
+    #[arg(
+        short = 'D',
+        long,
+        conflicts_with_all = ["interface", "read", "write", "capture_filter"]
+    )]
+    list_interfaces: bool,
 }
 
 fn main() -> ExitCode {
@@ -36,6 +43,13 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &Args) -> Result<(), YeyoError> {
+    if args.list_interfaces {
+        for (i, iface) in capture::interfaces()?.iter().enumerate() {
+            println!("{}. {iface}", i + 1);
+        }
+        return Ok(());
+    }
+
     let mut cap = match &args.read {
         Some(path) => Capture::file(path)?,
         None => Capture::live(capture::device(args.interface.as_deref())?)?,
