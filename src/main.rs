@@ -41,18 +41,18 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         None => Capture::live(capture::device(args.interface.as_deref())?)?,
     };
 
+    let link_type = LinkType::try_from(cap.link_type())?;
+
     if let Some(expr) = &args.capture_filter {
         cap.filter(expr)?;
-    }
-
-    if let Some(path) = &args.write {
-        cap.save_to(path)?;
     }
 
     let stop = cap.stopper();
     ctrlc::set_handler(move || stop.stop()).map_err(|e| YeyoError::Signal(e.to_string()))?;
 
-    let link_type = LinkType::try_from(cap.link_type())?;
+    if let Some(path) = &args.write {
+        cap.save_to(path)?;
+    }
 
     while let Some(frame) = cap.next_frame()? {
         let pkt = match Packet::parse(link_type, &frame.data) {
