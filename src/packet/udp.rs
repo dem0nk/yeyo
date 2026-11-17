@@ -1,6 +1,6 @@
 use crate::error::{Layer, YeyoError};
 
-const HEADER_LEN: usize = 8;
+pub const HEADER_LEN: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UdpHeader {

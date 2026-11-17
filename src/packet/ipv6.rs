@@ -2,7 +2,7 @@ use std::net::Ipv6Addr;
 
 use crate::error::{Layer, YeyoError};
 
-const HEADER_LEN: usize = 40;
+pub const HEADER_LEN: usize = 40;
 const VERSION: u8 = 6;
 
 const HOP_BY_HOP: u8 = 0;
@@ -105,13 +105,23 @@ impl Ipv6Header {
             }
         }
 
+        let payload_length = u16::from_be_bytes([bytes[4], bytes[5]]);
+        if payload_length != 0 && offset > HEADER_LEN + usize::from(payload_length) {
+            return Err(YeyoError::Malformed {
+                layer: Layer::Ipv6,
+                reason: format!(
+                    "extension headers end at byte {offset}, past payload length {payload_length}"
+                ),
+            });
+        }
+
         let mut src = [0u8; 16];
         src.copy_from_slice(&bytes[8..24]);
         let mut dst = [0u8; 16];
         dst.copy_from_slice(&bytes[24..40]);
 
         Ok(Ipv6Header {
-            payload_length: u16::from_be_bytes([bytes[4], bytes[5]]),
+            payload_length,
             protocol,
             hop_limit: bytes[7],
             src: Ipv6Addr::from(src),

@@ -36,10 +36,11 @@ pub enum Transport {
     Udp(UdpHeader),
 }
 
-pub struct Packet {
+pub struct Packet<'a> {
     pub link: Link,
     pub ip: Option<IpHeader>,
     pub transport: Option<Transport>,
+    pub payload: &'a [u8],
 }
 
 enum Network {
@@ -48,8 +49,8 @@ enum Network {
     Other,
 }
 
-impl Packet {
-    pub fn parse(link_type: LinkType, bytes: &[u8]) -> Result<Packet, YeyoError> {
+impl<'a> Packet<'a> {
+    pub fn parse(link_type: LinkType, bytes: &'a [u8]) -> Result<Packet<'a>, YeyoError> {
         let (link, network, link_len) = match link_type {
             LinkType::Ethernet => {
                 let eth = EthernetHeader::parse(bytes)?;
@@ -77,56 +78,84 @@ impl Packet {
 
         let after_link = &bytes[link_len..];
 
-        let (ip, protocol, ip_len) = match network {
-            Network::Ipv6 => {
-                let h = Ipv6Header::parse(after_link)?;
-                if let Some(frag) = h.fragment
-                    && frag.offset > 0
-                {
-                    return Ok(Packet {
-                        link,
-                        ip: Some(IpHeader::V6(h)),
-                        transport: None,
-                    });
-                }
-                let proto = h.protocol;
-                let len = h.header_len;
-                (IpHeader::V6(h), proto, len)
-            }
-            Network::Ipv4 => {
-                let h = Ipv4Header::parse(after_link)?;
-                if h.fragment_offset > 0 {
-                    return Ok(Packet {
-                        link,
-                        ip: Some(IpHeader::V4(h)),
-                        transport: None,
-                    });
-                }
-                let proto = h.protocol;
-                let len = h.header_len;
-                (IpHeader::V4(h), proto, len)
-            }
+        let ip = match network {
+            Network::Ipv4 => IpHeader::V4(Ipv4Header::parse(after_link)?),
+            Network::Ipv6 => IpHeader::V6(Ipv6Header::parse(after_link)?),
             Network::Other => {
                 return Ok(Packet {
                     link,
                     ip: None,
                     transport: None,
+                    payload: after_link,
                 });
             }
         };
 
-        let rest = &after_link[ip_len..];
-        let transport = match protocol {
-            PROTO_TCP => Some(Transport::Tcp(TcpHeader::parse(rest)?)),
-            PROTO_UDP => Some(Transport::Udp(UdpHeader::parse(rest)?)),
-            _ => None,
+        let datagram = &after_link[..ip.datagram_len(after_link.len())];
+        let ip_payload = &datagram[ip.header_len()..];
+
+        if ip.is_later_fragment() {
+            return Ok(Packet {
+                link,
+                ip: Some(ip),
+                transport: None,
+                payload: ip_payload,
+            });
+        }
+
+        let (transport, payload) = match ip.protocol() {
+            PROTO_TCP => {
+                let tcp = TcpHeader::parse(ip_payload)?;
+                let payload = &ip_payload[tcp.header_len..];
+                (Some(Transport::Tcp(tcp)), payload)
+            }
+            PROTO_UDP => {
+                let udp = UdpHeader::parse(ip_payload)?;
+                let end = usize::from(udp.length).min(ip_payload.len());
+                let payload = &ip_payload[udp::HEADER_LEN..end];
+                (Some(Transport::Udp(udp)), payload)
+            }
+            _ => (None, ip_payload),
         };
 
         Ok(Packet {
             link,
             ip: Some(ip),
             transport,
+            payload,
         })
+    }
+}
+
+impl IpHeader {
+    fn header_len(&self) -> usize {
+        match self {
+            IpHeader::V4(h) => h.header_len,
+            IpHeader::V6(h) => h.header_len,
+        }
+    }
+
+    fn protocol(&self) -> u8 {
+        match self {
+            IpHeader::V4(h) => h.protocol,
+            IpHeader::V6(h) => h.protocol,
+        }
+    }
+
+    fn is_later_fragment(&self) -> bool {
+        match self {
+            IpHeader::V4(h) => h.fragment_offset > 0,
+            IpHeader::V6(h) => h.fragment.is_some_and(|f| f.offset > 0),
+        }
+    }
+
+    fn datagram_len(&self, captured: usize) -> usize {
+        let declared = match self {
+            IpHeader::V4(h) => usize::from(h.total_length),
+            IpHeader::V6(h) if h.payload_length == 0 => captured,
+            IpHeader::V6(h) => ipv6::HEADER_LEN + usize::from(h.payload_length),
+        };
+        declared.min(captured)
     }
 }
 

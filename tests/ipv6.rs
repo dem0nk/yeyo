@@ -196,3 +196,41 @@ fn test_parse_hop_by_hop_not_first_err() {
         })
     );
 }
+
+#[test]
+fn test_parse_extensions_past_payload_length_err() {
+    let mut bytes = common::ipv6(0, SRC, DST, &common::ipv6_ext(17, &[]));
+    bytes[4..6].copy_from_slice(&4u16.to_be_bytes());
+
+    let result = Ipv6Header::parse(&bytes);
+
+    assert_eq!(
+        result.err(),
+        Some(YeyoError::Malformed {
+            layer: Layer::Ipv6,
+            reason: "extension headers end at byte 48, past payload length 4".to_string(),
+        })
+    );
+}
+
+#[test]
+fn test_parse_extensions_exactly_fill_payload_length_ok() -> Result<(), Box<dyn Error>> {
+    let bytes = common::ipv6(0, SRC, DST, &common::ipv6_ext(59, &[]));
+
+    let ip = Ipv6Header::parse(&bytes)?;
+
+    assert_eq!(ip.payload_length, 8);
+    assert_eq!(ip.header_len, 48);
+    Ok(())
+}
+
+#[test]
+fn test_parse_zero_payload_length_with_extensions_ok() -> Result<(), Box<dyn Error>> {
+    let mut bytes = common::ipv6(0, SRC, DST, &common::ipv6_ext(6, &[]));
+    bytes[4..6].copy_from_slice(&0u16.to_be_bytes());
+
+    let ip = Ipv6Header::parse(&bytes)?;
+
+    assert_eq!(ip.header_len, 48);
+    Ok(())
+}
