@@ -100,6 +100,19 @@ impl Capture {
         }
         Ok(())
     }
+
+    pub fn filter(&mut self, expr: &str) -> Result<(), YeyoError> {
+        self.handle.filter(expr, true).map_err(|e| {
+            let reason = match e {
+                pcap::Error::PcapError(msg) => msg,
+                other => other.to_string(),
+            };
+            YeyoError::CaptureFilter {
+                expr: expr.to_string(),
+                reason,
+            }
+        })
+    }
 }
 
 pub fn device(name: Option<&str>) -> Result<Device, YeyoError> {

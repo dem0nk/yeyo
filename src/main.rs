@@ -19,6 +19,9 @@ struct Args {
     /// Save every captured packet to a .pcap file
     #[arg(short, long)]
     write: Option<PathBuf>,
+    /// Capture filter in BPF syntax (e.g. "tcp port 80")
+    #[arg(short = 'f', long = "capture-filter")]
+    capture_filter: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -37,6 +40,10 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         Some(path) => Capture::file(path)?,
         None => Capture::live(capture::device(args.interface.as_deref())?)?,
     };
+
+    if let Some(expr) = &args.capture_filter {
+        cap.filter(expr)?;
+    }
 
     if let Some(path) = &args.write {
         cap.save_to(path)?;

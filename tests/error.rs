@@ -87,3 +87,15 @@ fn test_display_signal_ok() {
         "could not install Ctrl+C handler: already set"
     );
 }
+
+#[test]
+fn test_display_capture_filter_ok() {
+    let err = YeyoError::CaptureFilter {
+        expr: String::from("tcp prot 80"),
+        reason: String::from("syntax error"),
+    };
+    assert_eq!(
+        err.to_string(),
+        "invalid capture filter 'tcp prot 80': syntax error"
+    );
+}

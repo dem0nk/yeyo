@@ -80,14 +80,14 @@ impl Packet {
         let (ip, protocol, ip_len) = match network {
             Network::Ipv6 => {
                 let h = Ipv6Header::parse(after_link)?;
-                if let Some(frag) = h.fragment {
-                    if frag.offset > 0 {
-                        return Ok(Packet {
-                            link,
-                            ip: Some(IpHeader::V6(h)),
-                            transport: None,
-                        });
-                    }
+                if let Some(frag) = h.fragment
+                    && frag.offset > 0
+                {
+                    return Ok(Packet {
+                        link,
+                        ip: Some(IpHeader::V6(h)),
+                        transport: None,
+                    });
                 }
                 let proto = h.protocol;
                 let len = h.header_len;

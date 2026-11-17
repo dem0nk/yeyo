@@ -48,6 +48,10 @@ pub enum YeyoError {
     InvalidPath(PathBuf),
     SameFile(PathBuf),
     Signal(String),
+    CaptureFilter {
+        expr: String,
+        reason: String,
+    },
 }
 
 impl fmt::Display for YeyoError {
@@ -75,6 +79,9 @@ impl fmt::Display for YeyoError {
             }
             YeyoError::Signal(reason) => {
                 write!(f, "could not install Ctrl+C handler: {reason}")
+            }
+            YeyoError::CaptureFilter { expr, reason } => {
+                write!(f, "invalid capture filter '{expr}': {reason}")
             }
         }
     }

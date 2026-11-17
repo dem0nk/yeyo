@@ -415,3 +415,80 @@ fn test_stop_from_another_thread_ok() -> Result<(), Box<dyn Error>> {
     assert!(result.is_none());
     Ok(())
 }
+
+fn udp_then_tcp() -> Vec<u8> {
+    let udp = common::udp(5353, 53, &[]);
+    let udp = common::ethernet(
+        0x0800,
+        &common::ipv4(17, [10, 0, 0, 1], [10, 0, 0, 2], &udp),
+    );
+    let tcp = common::tcp(51000, 80, 0x02, &[]);
+    let tcp = common::ethernet(0x0800, &common::ipv4(6, [10, 0, 0, 1], [10, 0, 0, 2], &tcp));
+    let mut bytes = common::pcap_header(1);
+    bytes.extend(common::pcap_record(&udp, udp.len() as u32));
+    bytes.extend(common::pcap_record(&tcp, tcp.len() as u32));
+    bytes
+}
+
+fn filtered(name: &str, expr: &str) -> Result<Vec<Frame>, Box<dyn Error>> {
+    let input = common::temp_file(name, &udp_then_tcp())?;
+    let result = Capture::file(&input).and_then(|mut cap| {
+        cap.filter(expr)?;
+        let mut frames = Vec::new();
+        while let Some(frame) = cap.next_frame()? {
+            frames.push(frame);
+        }
+        Ok(frames)
+    });
+    std::fs::remove_file(&input)?;
+    Ok(result?)
+}
+
+#[test]
+fn test_filter_keeps_matching_only_ok() -> Result<(), Box<dyn Error>> {
+    let all = filtered("filter_all", "")?;
+    let tcp = filtered("filter_tcp", "tcp port 80")?;
+
+    assert_eq!(all.len(), 2);
+    assert_eq!(tcp, vec![all[1].clone()]);
+    Ok(())
+}
+
+#[test]
+fn test_filter_matches_nothing_ok() -> Result<(), Box<dyn Error>> {
+    let none = filtered("filter_none", "tcp port 443")?;
+    assert!(none.is_empty());
+    Ok(())
+}
+
+#[test]
+fn test_filter_syntax_error_err() {
+    let result = filtered("filter_syntax", "tcp prot 80");
+    let err = result.err().and_then(|e| e.downcast::<YeyoError>().ok());
+    assert!(matches!(
+        err.as_deref(),
+        Some(YeyoError::CaptureFilter { expr, .. }) if expr == "tcp prot 80"
+    ));
+}
+
+#[test]
+fn test_filter_nul_byte_err() {
+    let result = filtered("filter_nul", "tcp\0port 80");
+    let err = result.err().and_then(|e| e.downcast::<YeyoError>().ok());
+    assert!(matches!(
+        err.as_deref(),
+        Some(YeyoError::CaptureFilter { .. })
+    ));
+}
+
+#[test]
+fn test_filter_wrong_link_type_err() -> Result<(), Box<dyn Error>> {
+    let input = common::temp_file("filter_link", &common::pcap_header(0))?;
+
+    let mut cap = Capture::file(&input)?;
+    let result = cap.filter("ether host aa:bb:cc:dd:ee:ff");
+    std::fs::remove_file(&input)?;
+
+    assert!(matches!(result, Err(YeyoError::CaptureFilter { .. })));
+    Ok(())
+}
