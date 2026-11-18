@@ -1,10 +1,11 @@
 use super::summary::summary;
+use super::text::{printable, wrap};
 use crate::capture::Feed;
 use crate::error::YeyoError;
 use crate::packet::Packet;
 use crate::packet::link::LinkType;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 use std::io;
@@ -13,6 +14,7 @@ use std::time::Duration;
 
 const TICK: Duration = Duration::from_millis(100);
 const MAX_FRAMES_PER_TICK: usize = 10_000;
+const STREAM_LIMIT: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -23,19 +25,36 @@ pub enum Flow {
 #[derive(Debug, Default)]
 pub struct View {
     latest: Option<String>,
+    payload: String,
+    stream: String,
     packets: u64,
     ended: bool,
+    paused: bool,
 }
 
 impl View {
     pub fn packet(&mut self, len: u32, packet: &Packet<'_>) {
-        self.latest = Some(format!("{} len {len}", summary(packet)));
         self.packets += 1;
+        if self.paused {
+            return;
+        }
+        self.latest = Some(format!("{} len {len}", summary(packet)));
+        self.payload = printable(packet.payload);
+        self.stream.push_str(&self.payload);
+        self.trim_stream();
     }
 
     pub fn bad(&mut self, len: u32, err: &YeyoError) {
-        self.latest = Some(format!("bad packet: {err}, len {len}"));
         self.packets += 1;
+        if self.paused {
+            return;
+        }
+        self.latest = Some(format!("bad packet: {err}, len {len}"));
+        self.payload.clear();
+    }
+
+    pub fn stream(&self) -> &str {
+        &self.stream
     }
 
     pub fn end(&mut self) {
@@ -49,6 +68,14 @@ impl View {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Flow::Quit,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Flow::Quit,
+            KeyCode::Char(' ') => {
+                self.paused = !self.paused;
+                Flow::Continue
+            }
+            KeyCode::Char('c') => {
+                self.stream.clear();
+                Flow::Continue
+            }
             _ => Flow::Continue,
         }
     }
@@ -64,7 +91,13 @@ impl View {
         .areas(frame.area());
 
         let latest = self.latest.as_deref().unwrap_or("waiting for packets...");
-        let state = if self.ended { "ended" } else { "capturing" };
+        let state = if self.ended {
+            "ended"
+        } else if self.paused {
+            "paused"
+        } else {
+            "capturing"
+        };
         let count = match self.packets {
             1 => "1 packet".to_string(),
             n => format!("{n} packets"),
@@ -75,13 +108,43 @@ impl View {
             Paragraph::new(latest).block(Block::bordered().title(" packet ")),
             packet,
         );
-        frame.render_widget(Block::bordered().title(" payload "), payload);
-        frame.render_widget(Block::bordered().title(" stream "), stream);
+        boxed_rows(frame, " payload ", &self.payload, payload, Rows::First);
+        boxed_rows(frame, " stream ", &self.stream, stream, Rows::Last);
         frame.render_widget(
-            Paragraph::new(format!(" q quit | {count} | {state}")),
+            Paragraph::new(format!(
+                " q quit | space pause | c clear | {count} | {state}"
+            )),
             footer,
         );
     }
+
+    fn trim_stream(&mut self) {
+        if self.stream.len() <= STREAM_LIMIT {
+            return;
+        }
+        let mut cut = self.stream.len() - STREAM_LIMIT;
+        while !self.stream.is_char_boundary(cut) {
+            cut += 1;
+        }
+        self.stream.drain(..cut);
+    }
+}
+
+enum Rows {
+    First,
+    Last,
+}
+
+fn boxed_rows(frame: &mut Frame, title: &str, text: &str, area: Rect, rows: Rows) {
+    let block = Block::bordered().title(title);
+    let inner = block.inner(area);
+    let all = wrap(text, usize::from(inner.width));
+    let height = usize::from(inner.height);
+    let shown = match rows {
+        Rows::First => &all[..all.len().min(height)],
+        Rows::Last => &all[all.len().saturating_sub(height)..],
+    };
+    frame.render_widget(Paragraph::new(shown.join("\n")).block(block), area);
 }
 
 pub fn show_tui(feed: &Feed, link_type: LinkType) -> Result<(), YeyoError> {

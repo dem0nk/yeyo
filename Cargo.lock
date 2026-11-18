@@ -1992,4 +1992,5 @@ dependencies = [
  "pcap",
  "ratatui",
  "same-file",
+ "unicode-width",
 ]

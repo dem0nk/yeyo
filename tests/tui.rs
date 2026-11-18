@@ -24,6 +24,18 @@ fn udp_packet(view: &mut View, src_port: u16) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn tcp_payload(view: &mut View, payload: &[u8]) -> Result<(), Box<dyn Error>> {
+    let tcp = common::tcp(51000, 80, 0x18, payload);
+    let ip = common::ipv4(6, [10, 0, 0, 1], [10, 0, 0, 2], &tcp);
+    let packet = Packet::parse(LinkType::Raw, &ip)?;
+    view.packet(64, &packet);
+    Ok(())
+}
+
+fn key(view: &mut View, code: KeyCode) -> Flow {
+    view.key(press(code, KeyModifiers::NONE))
+}
+
 fn press(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, modifiers)
 }
@@ -154,4 +166,133 @@ fn test_key_release_ignored_ok() {
     release.kind = KeyEventKind::Release;
 
     assert_eq!(view.key(release), Flow::Continue);
+}
+
+#[test]
+fn test_view_payload_shown_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    tcp_payload(&mut view, b"GET /login HTTP/1.1\r\nHost: example.com\r\n")?;
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("GET /login HTTP/1.1"));
+    assert!(text.contains("Host: example.com"));
+    Ok(())
+}
+
+#[test]
+fn test_view_payload_escape_never_reaches_screen_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    tcp_payload(&mut view, b"\x1b[2Jboom")?;
+    let text = screen(&view, 80, 20)?;
+
+    assert!(!text.contains('\x1b'));
+    assert!(text.contains(".[2Jboom"));
+    Ok(())
+}
+
+#[test]
+fn test_view_stream_appends_in_order_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    tcp_payload(&mut view, b"user=")?;
+    tcp_payload(&mut view, b"admin")?;
+    udp_packet(&mut view, 1111)?;
+
+    assert_eq!(view.stream(), "user=adminq");
+    Ok(())
+}
+
+#[test]
+fn test_view_stream_shows_newest_rows_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    for i in 0..50 {
+        tcp_payload(&mut view, format!("line {i}\n").as_bytes())?;
+    }
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("line 49"));
+    assert!(!text.contains("line 0 "));
+    Ok(())
+}
+
+#[test]
+fn test_view_stream_bounded_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let chunk = "é".repeat(700);
+
+    for _ in 0..100 {
+        tcp_payload(&mut view, chunk.as_bytes())?;
+    }
+    tcp_payload(&mut view, b"END")?;
+
+    assert!(
+        view.stream().len() <= 64 * 1024,
+        "len {}",
+        view.stream().len()
+    );
+    assert!(view.stream().ends_with("END"));
+    Ok(())
+}
+
+#[test]
+fn test_key_clear_empties_stream_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    tcp_payload(&mut view, b"secret")?;
+
+    let flow = key(&mut view, KeyCode::Char('c'));
+
+    assert_eq!(flow, Flow::Continue);
+    assert_eq!(view.stream(), "");
+    Ok(())
+}
+
+#[test]
+fn test_key_pause_freezes_view_but_counts_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    udp_packet(&mut view, 1111)?;
+
+    key(&mut view, KeyCode::Char(' '));
+    udp_packet(&mut view, 2222)?;
+    tcp_payload(&mut view, b"hidden")?;
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("1111"));
+    assert!(!text.contains("2222"));
+    assert!(!view.stream().contains("hidden"));
+    assert!(text.contains("3 packets | paused"));
+    Ok(())
+}
+
+#[test]
+fn test_key_pause_twice_resumes_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    key(&mut view, KeyCode::Char(' '));
+    key(&mut view, KeyCode::Char(' '));
+    udp_packet(&mut view, 2222)?;
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("2222"));
+    assert!(text.contains("| capturing"));
+    Ok(())
+}
+
+#[test]
+fn test_view_bad_packet_clears_payload_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    tcp_payload(&mut view, b"old payload")?;
+    let err = YeyoError::Truncated {
+        layer: Layer::Tcp,
+        needed: 20,
+        got: 3,
+    };
+
+    view.bad(23, &err);
+    let text = screen(&view, 100, 30)?;
+
+    assert_eq!(text.matches("old payload").count(), 1);
+    Ok(())
 }
