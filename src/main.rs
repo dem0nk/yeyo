@@ -2,7 +2,7 @@ use clap::Parser;
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use yeyo::capture::{self, Capture, MAX_SNAPLEN, Options};
+use yeyo::capture::{self, Capture, Feed, MAX_SNAPLEN, Options};
 use yeyo::error::YeyoError;
 use yeyo::packet::Packet;
 use yeyo::packet::link::LinkType;
@@ -99,8 +99,17 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         cap.save_to(path)?;
     }
 
+    let feed = cap.spawn();
+    let printed = print_lines(&feed, link_type);
+    let stats = feed.finish()?;
+    printed?;
+    eprintln!("{stats}");
+    Ok(())
+}
+
+fn print_lines(feed: &Feed, link_type: LinkType) -> Result<(), YeyoError> {
     let mut lines = Lines::new(io::stdout().lock());
-    while let Some(frame) = cap.next_frame()? {
+    while let Some(frame) = feed.recv() {
         let written = match Packet::parse(link_type, &frame.data) {
             Ok(packet) => lines.packet(frame.time, frame.len, &packet),
             Err(e) => lines.bad(frame.time, frame.len, &e),
@@ -111,7 +120,5 @@ fn run(args: &Args) -> Result<(), YeyoError> {
             Err(e) => return Err(YeyoError::Output(e.to_string())),
         }
     }
-
-    eprintln!("{}", cap.stats()?);
     Ok(())
 }

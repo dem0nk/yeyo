@@ -1,9 +1,11 @@
 mod device;
+mod feed;
 mod frame;
 mod options;
 mod stats;
 
 pub use device::{Interface, describe, device, first_connected, interfaces};
+pub use feed::Feed;
 pub use frame::Frame;
 pub use options::{MAX_SNAPLEN, Options};
 pub use stats::{KernelStats, Stats};
