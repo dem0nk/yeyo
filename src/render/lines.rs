@@ -1,20 +1,10 @@
+use super::summary::summary;
+use crate::capture::Feed;
 use crate::error::YeyoError;
-use crate::packet::tcp::TcpFlags;
-use crate::packet::{Link, Packet, Transport};
-use std::io::{self, Write};
-use std::net::SocketAddr;
+use crate::packet::Packet;
+use crate::packet::link::LinkType;
+use std::io::{self, ErrorKind, Write};
 use std::time::{Duration, SystemTime};
-
-const FLAG_LETTERS: [(TcpFlags, char); 8] = [
-    (TcpFlags::FIN, 'F'),
-    (TcpFlags::SYN, 'S'),
-    (TcpFlags::RST, 'R'),
-    (TcpFlags::PSH, 'P'),
-    (TcpFlags::ACK, 'A'),
-    (TcpFlags::URG, 'U'),
-    (TcpFlags::ECE, 'E'),
-    (TcpFlags::CWR, 'W'),
-];
 
 pub struct Lines<W> {
     out: W,
@@ -54,49 +44,22 @@ impl<W: Write> Lines<W> {
     }
 }
 
+pub fn print_lines(feed: &Feed, link_type: LinkType) -> Result<(), YeyoError> {
+    let mut lines = Lines::new(io::stdout().lock());
+    while let Some(frame) = feed.recv() {
+        let written = match Packet::parse(link_type, &frame.data) {
+            Ok(packet) => lines.packet(frame.time, frame.len, &packet),
+            Err(e) => lines.bad(frame.time, frame.len, &e),
+        };
+        match written {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::BrokenPipe => break,
+            Err(e) => return Err(YeyoError::Output(e.to_string())),
+        }
+    }
+    Ok(())
+}
+
 fn seconds(d: Duration) -> String {
     format!("{}.{:06}", d.as_secs(), d.subsec_micros())
-}
-
-fn summary(packet: &Packet<'_>) -> String {
-    let ip = match &packet.ip {
-        Some(ip) => ip,
-        None => {
-            return match &packet.link {
-                Link::Ethernet(eth) => format!("ethertype 0x{:04x}", eth.ethertype),
-                Link::Loopback | Link::Raw => "non-IP".to_string(),
-            };
-        }
-    };
-    let (src, dst) = (ip.src(), ip.dst());
-    match &packet.transport {
-        Some(Transport::Tcp(tcp)) => format!(
-            "{} > {} TCP [{}]",
-            SocketAddr::new(src, tcp.src_port),
-            SocketAddr::new(dst, tcp.dst_port),
-            flags(tcp.flags)
-        ),
-        Some(Transport::Udp(udp)) => format!(
-            "{} > {} UDP",
-            SocketAddr::new(src, udp.src_port),
-            SocketAddr::new(dst, udp.dst_port)
-        ),
-        None if ip.is_later_fragment() => {
-            format!("{src} > {dst} fragment proto {}", ip.protocol())
-        }
-        None => format!("{src} > {dst} proto {}", ip.protocol()),
-    }
-}
-
-fn flags(flags: TcpFlags) -> String {
-    let letters: String = FLAG_LETTERS
-        .iter()
-        .filter(|(flag, _)| flags.contains(*flag))
-        .map(|(_, letter)| letter)
-        .collect();
-    if letters.is_empty() {
-        "none".to_string()
-    } else {
-        letters
-    }
 }

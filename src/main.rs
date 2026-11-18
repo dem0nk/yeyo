@@ -1,12 +1,11 @@
 use clap::Parser;
-use std::io::{self, ErrorKind};
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use yeyo::capture::{self, Capture, Feed, MAX_SNAPLEN, Options};
+use yeyo::capture::{self, Capture, MAX_SNAPLEN, Options};
 use yeyo::error::YeyoError;
-use yeyo::packet::Packet;
 use yeyo::packet::link::LinkType;
-use yeyo::render::Lines;
+use yeyo::render;
 
 /// Live packet sniffer with a peek view
 #[derive(Parser)]
@@ -100,25 +99,13 @@ fn run(args: &Args) -> Result<(), YeyoError> {
     }
 
     let feed = cap.spawn();
-    let printed = print_lines(&feed, link_type);
+    let shown = if io::stdout().is_terminal() {
+        render::show_tui(&feed, link_type)
+    } else {
+        render::print_lines(&feed, link_type)
+    };
     let stats = feed.finish()?;
-    printed?;
+    shown?;
     eprintln!("{stats}");
-    Ok(())
-}
-
-fn print_lines(feed: &Feed, link_type: LinkType) -> Result<(), YeyoError> {
-    let mut lines = Lines::new(io::stdout().lock());
-    while let Some(frame) = feed.recv() {
-        let written = match Packet::parse(link_type, &frame.data) {
-            Ok(packet) => lines.packet(frame.time, frame.len, &packet),
-            Err(e) => lines.bad(frame.time, frame.len, &e),
-        };
-        match written {
-            Ok(()) => {}
-            Err(e) if e.kind() == ErrorKind::BrokenPipe => break,
-            Err(e) => return Err(YeyoError::Output(e.to_string())),
-        }
-    }
     Ok(())
 }

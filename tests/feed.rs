@@ -139,3 +139,26 @@ fn test_feed_read_error_still_flushes_savefile_err() -> Result<(), Box<dyn Error
     assert_eq!(saved.len(), 2);
     Ok(())
 }
+
+#[test]
+fn test_feed_try_recv_then_disconnected_ok() -> Result<(), Box<dyn Error>> {
+    use std::sync::mpsc::TryRecvError;
+
+    let path = common::temp_file("feed_try_recv", &common::two_frames())?;
+
+    let feed = Capture::file(&path)?.spawn();
+    let mut frames = 0;
+    let end = loop {
+        match feed.try_recv() {
+            Ok(_) => frames += 1,
+            Err(TryRecvError::Empty) => std::thread::yield_now(),
+            Err(e) => break e,
+        }
+    };
+    feed.finish()?;
+    std::fs::remove_file(&path)?;
+
+    assert_eq!(frames, 2);
+    assert_eq!(end, TryRecvError::Disconnected);
+    Ok(())
+}

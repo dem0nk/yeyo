@@ -1,7 +1,7 @@
 use super::{Capture, Frame, Stats};
 use crate::error::YeyoError;
 use std::panic;
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::thread::{self, JoinHandle};
 
 const QUEUE_LEN: usize = 4096;
@@ -34,6 +34,10 @@ impl Capture {
 impl Feed {
     pub fn recv(&self) -> Option<Frame> {
         self.frames.recv().ok()
+    }
+
+    pub fn try_recv(&self) -> Result<Frame, TryRecvError> {
+        self.frames.try_recv()
     }
 
     pub fn finish(self) -> Result<Stats, YeyoError> {
