@@ -1,14 +1,15 @@
 use super::summary::summary;
 use super::text::{printable, wrap, wrap_tagged};
+use super::theme::{self, panel};
 use crate::capture::Feed;
 use crate::error::YeyoError;
 use crate::packet::link::LinkType;
-use crate::packet::{Endpoints, Packet};
+use crate::packet::{Endpoints, Packet, Transport};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::VecDeque;
 use std::io;
@@ -19,9 +20,13 @@ use std::time::Duration;
 const TICK: Duration = Duration::from_millis(100);
 const MAX_FRAMES_PER_TICK: usize = 10_000;
 const STREAM_LIMIT: usize = 64 * 1024;
-const CLIENT_COLOR: Color = Color::LightRed;
-const SERVER_COLOR: Color = Color::LightBlue;
 const PROTO_TCP: u8 = 6;
+const KEYS: [(&str, &str); 4] = [
+    ("q", "quit"),
+    ("space", "pause"),
+    ("c", "clear"),
+    ("f", "follow"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -65,7 +70,7 @@ struct Chunk {
 
 #[derive(Debug, Default)]
 pub struct View {
-    latest: Option<String>,
+    latest: Option<Line<'static>>,
     latest_endpoints: Option<Endpoints>,
     payload: String,
     stream: VecDeque<Chunk>,
@@ -91,7 +96,15 @@ impl View {
             },
             (Some(_), None) => return,
         };
-        self.latest = Some(format!("{} len {len}", summary(packet)));
+        let style = match packet.transport {
+            Some(Transport::Tcp(_)) => theme::TCP,
+            Some(Transport::Udp(_)) => theme::UDP,
+            None => theme::OTHER,
+        };
+        self.latest = Some(Line::from(vec![
+            Span::styled(summary(packet), style),
+            Span::styled(format!(" len {len}"), theme::MUTED),
+        ]));
         self.latest_endpoints = endpoints;
         self.payload = printable(packet.payload);
         self.push_stream(side, self.payload.clone());
@@ -102,7 +115,10 @@ impl View {
         if self.paused || self.lock.is_some() {
             return;
         }
-        self.latest = Some(format!("bad packet: {err}, len {len}"));
+        self.latest = Some(Line::from(vec![
+            Span::styled(format!("bad packet: {err}"), theme::BAD),
+            Span::styled(format!(", len {len}"), theme::MUTED),
+        ]));
         self.latest_endpoints = None;
         self.payload.clear();
     }
@@ -145,44 +161,52 @@ impl View {
         ])
         .areas(frame.area());
 
-        let latest = self.latest.as_deref().unwrap_or("waiting for packets...");
-        let state = if self.ended {
-            "ended"
-        } else if self.paused {
-            "paused"
-        } else {
-            "capturing"
-        };
-        let count = match self.packets {
-            1 => "1 packet".to_string(),
-            n => format!("{n} packets"),
-        };
-
         frame.render_widget(
-            Paragraph::new(self.lock_line()).block(Block::bordered().title(" filter ")),
+            Paragraph::new(self.lock_line()).block(panel("filter")),
             filter,
         );
-        frame.render_widget(
-            Paragraph::new(latest).block(Block::bordered().title(" packet ")),
-            packet,
-        );
-        let block = Block::bordered().title(" payload ");
+        let latest = match &self.latest {
+            Some(line) => line.clone(),
+            None => Line::styled("waiting for packets...", theme::MUTED),
+        };
+        frame.render_widget(Paragraph::new(latest).block(panel("packet")), packet);
+        let block = panel("payload");
         let inner = block.inner(payload);
         let rows = wrap(&self.payload, usize::from(inner.width));
         let shown = &rows[..rows.len().min(usize::from(inner.height))];
         frame.render_widget(Paragraph::new(shown.join("\n")).block(block), payload);
         self.draw_stream(frame, stream);
-        frame.render_widget(
-            Paragraph::new(format!(
-                " q quit | space pause | c clear | f follow | {count} | {state}"
-            )),
-            footer,
-        );
+        frame.render_widget(Paragraph::new(self.footer_line()), footer);
+    }
+
+    fn footer_line(&self) -> Line<'static> {
+        let mut spans = vec![Span::raw(" ")];
+        for (key, label) in KEYS {
+            spans.push(Span::styled(format!(" {key} "), theme::KEY));
+            spans.push(Span::styled(format!(" {label}  "), theme::HINT));
+        }
+        let count = match self.packets {
+            1 => "1 packet".to_string(),
+            n => format!("{n} packets"),
+        };
+        let (state, style) = if self.ended {
+            ("ended", theme::ENDED)
+        } else if self.paused {
+            ("paused", theme::PAUSED)
+        } else {
+            ("capturing", theme::CAPTURING)
+        };
+        spans.push(Span::styled(format!("{count} | "), theme::HINT));
+        spans.push(Span::styled(state, style));
+        Line::from(spans)
     }
 
     fn lock_line(&self) -> Line<'static> {
         let Some(lock) = self.lock else {
-            return Line::from("none (f follows the current packet's conversation)");
+            return Line::styled(
+                "none (f follows the current packet's conversation)",
+                theme::MUTED,
+            );
         };
         let protocol = if lock.protocol == PROTO_TCP {
             "TCP"
@@ -190,15 +214,19 @@ impl View {
             "UDP"
         };
         Line::from(vec![
-            Span::raw(format!("following {protocol} ")),
-            Span::styled(lock.client.to_string(), Style::new().fg(CLIENT_COLOR)),
-            Span::raw(" <> "),
-            Span::styled(lock.server.to_string(), Style::new().fg(SERVER_COLOR)),
+            Span::styled("following ", theme::FOLLOW),
+            Span::raw(format!("{protocol} ")),
+            Span::styled(lock.client.to_string(), theme::CLIENT),
+            Span::styled(" <> ", theme::MUTED),
+            Span::styled(lock.server.to_string(), theme::SERVER),
         ])
     }
 
     fn draw_stream(&self, frame: &mut Frame, area: Rect) {
-        let block = Block::bordered().title(" stream ");
+        let block = match self.lock {
+            Some(_) => panel("stream").border_style(theme::FOLLOW),
+            None => panel("stream"),
+        };
         let inner = block.inner(area);
         let parts: Vec<(Option<Side>, &str)> = self
             .stream
@@ -226,7 +254,6 @@ impl View {
             self.clear_stream();
             return;
         }
-
         if let Some(endpoints) = self.latest_endpoints {
             self.lock = Some(Lock {
                 protocol: endpoints.protocol,
@@ -275,8 +302,8 @@ impl View {
 
 fn side_style(side: Option<Side>) -> Style {
     match side {
-        Some(Side::Client) => Style::new().fg(CLIENT_COLOR),
-        Some(Side::Server) => Style::new().fg(SERVER_COLOR),
+        Some(Side::Client) => theme::CLIENT,
+        Some(Side::Server) => theme::SERVER,
         None => Style::new(),
     }
 }

@@ -92,7 +92,7 @@ fn test_view_empty_shows_waiting_ok() -> Result<(), Box<dyn Error>> {
 fn test_view_shows_boxes_ok() -> Result<(), Box<dyn Error>> {
     let text = screen(&View::default(), 80, 20)?;
 
-    for title in [" filter ", " packet ", " payload ", " stream ", " q quit "] {
+    for title in [" filter ", " packet ", " payload ", " stream ", " quit "] {
         assert!(text.contains(title), "missing {title:?}");
     }
     Ok(())
@@ -486,5 +486,88 @@ fn test_stream_bounded_many_small_chunks_ok() -> Result<(), Box<dyn Error>> {
 
     assert!(view.stream().len() <= 64 * 1024);
     assert!(view.stream().ends_with("19999 "));
+    Ok(())
+}
+
+#[test]
+fn test_packet_row_coloured_by_protocol_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    udp_packet(&mut view, 1111)?;
+    let udp = drawn(&view)?;
+    send(&mut view, CLIENT, SERVER, b"x")?;
+    let tcp = drawn(&view)?;
+
+    assert_eq!(last_color_of(&udp, "UDP"), Some(Color::LightGreen));
+    assert_eq!(last_color_of(&tcp, "TCP"), Some(Color::LightCyan));
+    Ok(())
+}
+
+#[test]
+fn test_packet_row_other_protocol_coloured_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+
+    view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
+    let buffer = drawn(&view)?;
+
+    assert_eq!(
+        last_color_of(&buffer, "10.0.0.1"),
+        Some(Color::LightMagenta)
+    );
+    Ok(())
+}
+
+#[test]
+fn test_bad_packet_shown_red_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let err = YeyoError::Truncated {
+        layer: Layer::Udp,
+        needed: 8,
+        got: 3,
+    };
+
+    view.bad(31, &err);
+    let buffer = drawn(&view)?;
+
+    assert_eq!(last_color_of(&buffer, "bad packet"), Some(Color::Red));
+    Ok(())
+}
+
+#[test]
+fn test_footer_state_colours_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let capturing = drawn(&view)?;
+    key(&mut view, KeyCode::Char(' '));
+    let paused = drawn(&view)?;
+    view.end();
+    let ended = drawn(&view)?;
+
+    assert_eq!(last_color_of(&capturing, "capturing"), Some(Color::Green));
+    assert_eq!(last_color_of(&paused, "paused"), Some(Color::Yellow));
+    assert_eq!(last_color_of(&ended, "ended"), Some(Color::Red));
+    Ok(())
+}
+
+#[test]
+fn test_footer_keys_stand_out_ok() -> Result<(), Box<dyn Error>> {
+    let buffer = drawn(&View::default())?;
+
+    assert_eq!(last_color_of(&buffer, "space"), Some(Color::Black));
+    assert_eq!(last_color_of(&buffer, "pause"), Some(Color::Gray));
+    Ok(())
+}
+
+#[test]
+fn test_lock_highlights_stream_border_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+    let before = drawn(&view)?;
+
+    key(&mut view, KeyCode::Char('f'));
+    let after = drawn(&view)?;
+
+    assert_eq!(last_color_of(&before, "╰"), Some(Color::DarkGray));
+    assert_eq!(last_color_of(&after, "╰"), Some(Color::Yellow));
     Ok(())
 }

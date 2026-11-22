@@ -1,6 +1,7 @@
 mod lines;
 mod summary;
 mod text;
+mod theme;
 mod tui;
 
 pub use lines::{Lines, print_lines};
