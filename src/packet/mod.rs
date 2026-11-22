@@ -3,7 +3,7 @@ use ethernet::EthernetHeader;
 use ipv4::Ipv4Header;
 use ipv6::Ipv6Header;
 use link::LinkType;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use tcp::TcpHeader;
 use udp::UdpHeader;
 
@@ -42,6 +42,13 @@ pub struct Packet<'a> {
     pub ip: Option<IpHeader>,
     pub transport: Option<Transport>,
     pub payload: &'a [u8],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Endpoints {
+    pub protocol: u8,
+    pub src: SocketAddr,
+    pub dst: SocketAddr,
 }
 
 enum Network {
@@ -124,6 +131,21 @@ impl<'a> Packet<'a> {
             ip: Some(ip),
             transport,
             payload,
+        })
+    }
+}
+
+impl Packet<'_> {
+    pub fn endpoints(&self) -> Option<Endpoints> {
+        let ip = self.ip.as_ref()?;
+        let (src_port, dst_port) = match self.transport.as_ref()? {
+            Transport::Tcp(tcp) => (tcp.src_port, tcp.dst_port),
+            Transport::Udp(udp) => (udp.src_port, udp.dst_port),
+        };
+        Some(Endpoints {
+            protocol: ip.protocol(),
+            src: SocketAddr::new(ip.src(), src_port),
+            dst: SocketAddr::new(ip.dst(), dst_port),
         })
     }
 }

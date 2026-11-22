@@ -20,24 +20,42 @@ pub fn printable(bytes: &[u8]) -> String {
 }
 
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    wrap_tagged(&[((), text)], width)
+        .into_iter()
+        .map(|row| row.into_iter().map(|(_, piece)| piece).collect())
+        .collect()
+}
+
+pub fn wrap_tagged<T: Copy + PartialEq>(
+    parts: &[(T, &str)],
+    width: usize,
+) -> Vec<Vec<(T, String)>> {
     let mut rows = Vec::new();
     if width == 0 {
         return rows;
     }
-    for line in text.split('\n') {
-        let mut row = String::new();
-        let mut used = 0;
-        for c in line.chars() {
+    let mut row: Vec<(T, String)> = Vec::new();
+    let mut used = 0;
+    for &(tag, text) in parts {
+        for c in text.chars() {
+            if c == '\n' {
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+                continue;
+            }
             let w = c.width().unwrap_or(0);
             if used + w > width && !row.is_empty() {
                 rows.push(std::mem::take(&mut row));
                 used = 0;
             }
-            row.push(c);
+            match row.last_mut() {
+                Some((last, piece)) if *last == tag => piece.push(c),
+                _ => row.push((tag, c.to_string())),
+            }
             used += w;
         }
-        rows.push(row);
     }
+    rows.push(row);
     rows
 }
 

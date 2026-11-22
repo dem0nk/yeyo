@@ -1,4 +1,4 @@
-use yeyo::render::{printable, wrap};
+use yeyo::render::{printable, wrap, wrap_tagged};
 
 #[test]
 fn test_printable_plain_ascii_ok() {
@@ -102,4 +102,52 @@ fn test_wrap_zero_width_ok() {
 #[test]
 fn test_wrap_empty_ok() {
     assert_eq!(wrap("", 10), [""]);
+}
+
+#[test]
+fn test_wrap_tagged_merges_same_tag_ok() {
+    let rows = wrap_tagged(&[(1, "ab"), (1, "cd")], 10);
+
+    assert_eq!(rows, [vec![(1, "abcd".to_string())]]);
+}
+
+#[test]
+fn test_wrap_tagged_keeps_tags_apart_ok() {
+    let rows = wrap_tagged(&[(1, "ab"), (2, "cd")], 10);
+
+    assert_eq!(rows, [vec![(1, "ab".to_string()), (2, "cd".to_string())]]);
+}
+
+#[test]
+fn test_wrap_tagged_tag_crosses_row_break_ok() {
+    let rows = wrap_tagged(&[(1, "abc"), (2, "defg")], 5);
+
+    assert_eq!(
+        rows,
+        [
+            vec![(1, "abc".to_string()), (2, "de".to_string())],
+            vec![(2, "fg".to_string())],
+        ]
+    );
+}
+
+#[test]
+fn test_wrap_tagged_newline_inside_part_ok() {
+    let rows = wrap_tagged(&[(1, "a\nb"), (2, "c\n")], 10);
+
+    assert_eq!(
+        rows,
+        [
+            vec![(1, "a".to_string())],
+            vec![(1, "b".to_string()), (2, "c".to_string())],
+            vec![],
+        ]
+    );
+}
+
+#[test]
+fn test_wrap_tagged_empty_parts_ok() {
+    let rows = wrap_tagged::<u8>(&[], 10);
+
+    assert_eq!(rows, [Vec::<(u8, String)>::new()]);
 }

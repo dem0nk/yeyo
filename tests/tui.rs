@@ -2,7 +2,9 @@ mod common;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::style::Color;
 use std::error::Error;
 use yeyo::error::{Layer, YeyoError};
 use yeyo::packet::Packet;
@@ -35,6 +37,43 @@ fn tcp_payload(view: &mut View, payload: &[u8]) -> Result<(), Box<dyn Error>> {
 fn key(view: &mut View, code: KeyCode) -> Flow {
     view.key(press(code, KeyModifiers::NONE))
 }
+
+fn send(
+    view: &mut View,
+    src: ([u8; 4], u16),
+    dst: ([u8; 4], u16),
+    payload: &[u8],
+) -> Result<(), Box<dyn Error>> {
+    let tcp = common::tcp(src.1, dst.1, 0x18, payload);
+    let ip = common::ipv4(6, src.0, dst.0, &tcp);
+    let packet = Packet::parse(LinkType::Raw, &ip)?;
+    view.packet(64, &packet);
+    Ok(())
+}
+
+fn drawn(view: &View) -> Result<Buffer, Box<dyn Error>> {
+    let mut terminal = Terminal::new(TestBackend::new(80, 20))?;
+    terminal.draw(|frame| view.draw(frame))?;
+    Ok(terminal.backend().buffer().clone())
+}
+
+fn last_color_of(buffer: &Buffer, needle: &str) -> Option<Color> {
+    let cells = &buffer.content;
+    let wanted: Vec<String> = needle.chars().map(String::from).collect();
+    (0..cells.len().saturating_sub(wanted.len()))
+        .rev()
+        .find(|&i| {
+            wanted
+                .iter()
+                .enumerate()
+                .all(|(j, c)| cells[i + j].symbol() == c.as_str())
+        })
+        .map(|i| cells[i].fg)
+}
+
+const CLIENT: ([u8; 4], u16) = ([10, 0, 0, 1], 51000);
+const SERVER: ([u8; 4], u16) = ([10, 0, 0, 2], 80);
+const OTHER: ([u8; 4], u16) = ([10, 0, 0, 9], 4444);
 
 fn press(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, modifiers)
@@ -294,5 +333,158 @@ fn test_view_bad_packet_clears_payload_ok() -> Result<(), Box<dyn Error>> {
     let text = screen(&view, 100, 30)?;
 
     assert_eq!(text.matches("old payload").count(), 1);
+    Ok(())
+}
+
+#[test]
+fn test_lock_follows_conversation_both_directions_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"GET / ")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    send(&mut view, OTHER, SERVER, b"noise ")?;
+    send(&mut view, SERVER, CLIENT, b"200 OK ")?;
+    send(&mut view, CLIENT, OTHER, b"noise ")?;
+
+    assert_eq!(view.stream(), "GET / 200 OK ");
+    Ok(())
+}
+
+#[test]
+fn test_lock_colours_client_and_server_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"REQUEST")?;
+    key(&mut view, KeyCode::Char('f'));
+
+    send(&mut view, SERVER, CLIENT, b"RESPONSE")?;
+    let buffer = drawn(&view)?;
+
+    assert_eq!(last_color_of(&buffer, "REQUEST"), Some(Color::LightRed));
+    assert_eq!(last_color_of(&buffer, "RESPONSE"), Some(Color::LightBlue));
+    Ok(())
+}
+
+#[test]
+fn test_lock_shown_in_filter_bar_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("following TCP 10.0.0.1:51000 <> 10.0.0.2:80"));
+    Ok(())
+}
+
+#[test]
+fn test_lock_ignores_other_traffic_on_screen_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+    key(&mut view, KeyCode::Char('f'));
+
+    send(&mut view, OTHER, SERVER, b"noise")?;
+    udp_packet(&mut view, 1111)?;
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("10.0.0.1:51000 > 10.0.0.2:80 TCP"));
+    assert!(!text.contains("noise"));
+    assert!(text.contains("3 packets"));
+    Ok(())
+}
+
+#[test]
+fn test_lock_same_ports_other_protocol_ignored_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"tcp ")?;
+    key(&mut view, KeyCode::Char('f'));
+
+    let udp = common::udp(CLIENT.1, SERVER.1, b"udp");
+    let ip = common::ipv4(17, CLIENT.0, SERVER.0, &udp);
+    view.packet(64, &Packet::parse(LinkType::Raw, &ip)?);
+
+    assert_eq!(view.stream(), "tcp ");
+    Ok(())
+}
+
+#[test]
+fn test_lock_ignores_bad_packets_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+    key(&mut view, KeyCode::Char('f'));
+    let err = YeyoError::Truncated {
+        layer: Layer::Tcp,
+        needed: 20,
+        got: 3,
+    };
+
+    view.bad(23, &err);
+    let text = screen(&view, 100, 20)?;
+
+    assert!(!text.contains("bad packet"));
+    assert!(text.contains("2 packets"));
+    Ok(())
+}
+
+#[test]
+fn test_lock_twice_unlocks_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"a")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    key(&mut view, KeyCode::Char('f'));
+    send(&mut view, OTHER, SERVER, b"b")?;
+    let text = screen(&view, 80, 20)?;
+
+    assert_eq!(view.stream(), "b");
+    assert!(text.contains("none (f follows"));
+    Ok(())
+}
+
+#[test]
+fn test_lock_without_ports_does_nothing_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+    view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
+
+    key(&mut view, KeyCode::Char('f'));
+    send(&mut view, OTHER, SERVER, b"still shown")?;
+
+    assert!(screen(&view, 80, 20)?.contains("still shown"));
+    Ok(())
+}
+
+#[test]
+fn test_lock_before_any_packet_does_nothing_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    key(&mut view, KeyCode::Char('f'));
+    send(&mut view, OTHER, SERVER, b"shown")?;
+
+    assert_eq!(view.stream(), "shown");
+    Ok(())
+}
+
+#[test]
+fn test_lock_starts_stream_fresh_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, OTHER, SERVER, b"old ")?;
+    send(&mut view, CLIENT, SERVER, b"new")?;
+
+    key(&mut view, KeyCode::Char('f'));
+
+    assert_eq!(view.stream(), "new");
+    Ok(())
+}
+
+#[test]
+fn test_stream_bounded_many_small_chunks_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    for i in 0..20_000 {
+        tcp_payload(&mut view, format!("{i:05} ").as_bytes())?;
+    }
+
+    assert!(view.stream().len() <= 64 * 1024);
+    assert!(view.stream().ends_with("19999 "));
     Ok(())
 }

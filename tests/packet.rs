@@ -5,7 +5,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use yeyo::error::{Layer, YeyoError};
 use yeyo::packet::Link;
 use yeyo::packet::link::LinkType;
-use yeyo::packet::{IpHeader, Packet, Transport, tcp::TcpFlags};
+use yeyo::packet::{Endpoints, IpHeader, Packet, Transport, tcp::TcpFlags};
 
 #[test]
 fn test_parse_ipv4_udp_ok() -> Result<(), Box<dyn Error>> {
@@ -441,5 +441,54 @@ fn test_payload_non_ip_is_after_link_ok() -> Result<(), Box<dyn Error>> {
     let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
 
     assert_eq!(pkt.payload, &arp);
+    Ok(())
+}
+
+#[test]
+fn test_endpoints_tcp_ok() -> Result<(), Box<dyn Error>> {
+    let tcp = common::tcp(51000, 80, 0x02, &[]);
+    let ip = common::ipv4(6, [10, 0, 0, 1], [10, 0, 0, 2], &tcp);
+
+    let pkt = Packet::parse(LinkType::Raw, &ip)?;
+
+    assert_eq!(
+        pkt.endpoints(),
+        Some(Endpoints {
+            protocol: 6,
+            src: "10.0.0.1:51000".parse()?,
+            dst: "10.0.0.2:80".parse()?,
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn test_endpoints_ipv6_udp_ok() -> Result<(), Box<dyn Error>> {
+    let udp = common::udp(5353, 53, &[]);
+    let ip = common::ipv6(17, Ipv6Addr::LOCALHOST, "2001:db8::1".parse()?, &udp);
+
+    let pkt = Packet::parse(LinkType::Raw, &ip)?;
+
+    assert_eq!(
+        pkt.endpoints(),
+        Some(Endpoints {
+            protocol: 17,
+            src: "[::1]:5353".parse()?,
+            dst: "[2001:db8::1]:53".parse()?,
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn test_endpoints_none_without_ports_ok() -> Result<(), Box<dyn Error>> {
+    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+    let arp = common::ethernet(0x0806, &[0; 28]);
+    let mut fragment = common::ipv4(6, [10, 0, 0, 1], [10, 0, 0, 2], &[0; 8]);
+    fragment[6..8].copy_from_slice(&0x00b9u16.to_be_bytes());
+
+    assert_eq!(Packet::parse(LinkType::Raw, &icmp)?.endpoints(), None);
+    assert_eq!(Packet::parse(LinkType::Ethernet, &arp)?.endpoints(), None);
+    assert_eq!(Packet::parse(LinkType::Raw, &fragment)?.endpoints(), None);
     Ok(())
 }
