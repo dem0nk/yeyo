@@ -29,7 +29,10 @@ fn tcp_line(flags: u8) -> Result<String, Box<dyn Error>> {
 fn test_line_ipv4_tcp_ok() -> Result<(), Box<dyn Error>> {
     let line = tcp_line(0x02)?;
 
-    assert_eq!(line, "0.000000 10.0.0.1:51000 > 10.0.0.2:80 TCP [S] len 99\n");
+    assert_eq!(
+        line,
+        "0.000000 10.0.0.1:51000 > 10.0.0.2:80 TCP [S] len 99\n"
+    );
     Ok(())
 }
 
@@ -77,7 +80,10 @@ fn test_line_later_fragment_ok() -> Result<(), Box<dyn Error>> {
 
     let line = render(LinkType::Raw, &ip)?;
 
-    assert_eq!(line, "0.000000 10.0.0.1 > 10.0.0.2 fragment proto 17 len 99\n");
+    assert_eq!(
+        line,
+        "0.000000 10.0.0.1 > 10.0.0.2 fragment proto 17 len 99\n"
+    );
     Ok(())
 }
 
@@ -151,6 +157,9 @@ fn test_line_write_failure_err() -> Result<(), Box<dyn Error>> {
 
     let result = Lines::new(&mut full[..]).packet(at(0), 1, &packet);
 
-    assert_eq!(result.map_err(|e| e.kind()), Err(std::io::ErrorKind::WriteZero));
+    assert_eq!(
+        result.map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::WriteZero)
+    );
     Ok(())
 }

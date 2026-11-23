@@ -571,3 +571,55 @@ fn test_lock_highlights_stream_border_ok() -> Result<(), Box<dyn Error>> {
     assert_eq!(last_color_of(&after, "╰"), Some(Color::Yellow));
     Ok(())
 }
+
+#[test]
+fn test_filter_bar_shows_capture_filter_ok() -> Result<(), Box<dyn Error>> {
+    let view = View::new(Some("tcp port 80"));
+
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("capture tcp port 80"));
+    assert!(text.contains("none (f follows"));
+    Ok(())
+}
+
+#[test]
+fn test_filter_bar_without_capture_filter_ok() -> Result<(), Box<dyn Error>> {
+    let text = screen(&View::new(None), 80, 20)?;
+
+    assert!(text.contains("capture all packets"));
+    Ok(())
+}
+
+#[test]
+fn test_filter_bar_keeps_capture_filter_while_following_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::new(Some("tcp"));
+    send(&mut view, CLIENT, SERVER, b"x")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    let text = screen(&view, 100, 20)?;
+
+    assert!(text.contains("capture tcp"));
+    assert!(text.contains("following TCP 10.0.0.1:51000 <> 10.0.0.2:80"));
+    Ok(())
+}
+
+#[test]
+fn test_filter_bar_hostile_capture_filter_sanitized_ok() -> Result<(), Box<dyn Error>> {
+    let view = View::new(Some("tcp\x1b[2J\nport 80"));
+
+    let text = screen(&view, 80, 20)?;
+
+    assert!(!text.contains('\x1b'));
+    assert!(text.contains("capture tcp.[2J port 80"));
+    Ok(())
+}
+
+#[test]
+fn test_filter_bar_capture_filter_coloured_ok() -> Result<(), Box<dyn Error>> {
+    let buffer = drawn(&View::new(Some("udp")))?;
+
+    assert_eq!(last_color_of(&buffer, "udp"), Some(Color::White));
+    assert_eq!(last_color_of(&buffer, "capture"), Some(Color::Gray));
+    Ok(())
+}

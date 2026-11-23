@@ -100,7 +100,7 @@ fn run(args: &Args) -> Result<(), YeyoError> {
 
     let feed = cap.spawn();
     let shown = if io::stdout().is_terminal() {
-        render::show_tui(&feed, link_type)
+        render::show_tui(&feed, link_type, args.capture_filter.as_deref())
     } else {
         render::print_lines(&feed, link_type)
     };

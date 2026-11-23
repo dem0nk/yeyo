@@ -8,6 +8,7 @@ pub(super) const TITLE: Style = Style::new()
     .add_modifier(Modifier::BOLD);
 pub(super) const MUTED: Style = Style::new().fg(Color::DarkGray);
 pub(super) const HINT: Style = Style::new().fg(Color::Gray);
+pub(super) const FILTER: Style = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
 pub(super) const KEY: Style = Style::new()
     .fg(Color::Black)
     .bg(Color::Cyan)

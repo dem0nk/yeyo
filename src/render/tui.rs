@@ -70,6 +70,7 @@ struct Chunk {
 
 #[derive(Debug, Default)]
 pub struct View {
+    capture_filter: Option<String>,
     latest: Option<Line<'static>>,
     latest_endpoints: Option<Endpoints>,
     payload: String,
@@ -82,6 +83,14 @@ pub struct View {
 }
 
 impl View {
+    pub fn new(capture_filter: Option<&str>) -> Self {
+        Self {
+            capture_filter: capture_filter
+                .map(|expr| printable(expr.as_bytes()).replace('\n', " ")),
+            ..Self::default()
+        }
+    }
+
     pub fn packet(&mut self, len: u32, packet: &Packet<'_>) {
         self.packets += 1;
         if self.paused {
@@ -162,7 +171,7 @@ impl View {
         .areas(frame.area());
 
         frame.render_widget(
-            Paragraph::new(self.lock_line()).block(panel("filter")),
+            Paragraph::new(self.filter_line()).block(panel("filter")),
             filter,
         );
         let latest = match &self.latest {
@@ -201,25 +210,36 @@ impl View {
         Line::from(spans)
     }
 
-    fn lock_line(&self) -> Line<'static> {
+    fn filter_line(&self) -> Line<'static> {
+        let mut spans = vec![Span::styled("capture ", theme::HINT)];
+        spans.push(match &self.capture_filter {
+            Some(expr) => Span::styled(expr.clone(), theme::FILTER),
+            None => Span::styled("all packets", theme::MUTED),
+        });
+        spans.push(Span::styled("  │  ", theme::BORDER));
+        spans.extend(self.lock_spans());
+        Line::from(spans)
+    }
+
+    fn lock_spans(&self) -> Vec<Span<'static>> {
         let Some(lock) = self.lock else {
-            return Line::styled(
+            return vec![Span::styled(
                 "none (f follows the current packet's conversation)",
                 theme::MUTED,
-            );
+            )];
         };
         let protocol = if lock.protocol == PROTO_TCP {
             "TCP"
         } else {
             "UDP"
         };
-        Line::from(vec![
+        vec![
             Span::styled("following ", theme::FOLLOW),
             Span::raw(format!("{protocol} ")),
             Span::styled(lock.client.to_string(), theme::CLIENT),
             Span::styled(" <> ", theme::MUTED),
             Span::styled(lock.server.to_string(), theme::SERVER),
-        ])
+        ]
     }
 
     fn draw_stream(&self, frame: &mut Frame, area: Rect) {
@@ -308,7 +328,11 @@ fn side_style(side: Option<Side>) -> Style {
     }
 }
 
-pub fn show_tui(feed: &Feed, link_type: LinkType) -> Result<(), YeyoError> {
+pub fn show_tui(
+    feed: &Feed,
+    link_type: LinkType,
+    capture_filter: Option<&str>,
+) -> Result<(), YeyoError> {
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
         Err(e) => {
@@ -316,14 +340,18 @@ pub fn show_tui(feed: &Feed, link_type: LinkType) -> Result<(), YeyoError> {
             return Err(output(e));
         }
     };
-    let shown = run(&mut terminal, feed, link_type);
+    let shown = run(&mut terminal, feed, link_type, View::new(capture_filter));
     let restored = ratatui::try_restore().map_err(output);
     shown?;
     restored
 }
 
-fn run(terminal: &mut DefaultTerminal, feed: &Feed, link_type: LinkType) -> Result<(), YeyoError> {
-    let mut view = View::default();
+fn run(
+    terminal: &mut DefaultTerminal,
+    feed: &Feed,
+    link_type: LinkType,
+    mut view: View,
+) -> Result<(), YeyoError> {
     loop {
         drain(feed, link_type, &mut view);
         terminal.draw(|frame| view.draw(frame)).map_err(output)?;
