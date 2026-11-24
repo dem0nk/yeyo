@@ -435,7 +435,7 @@ fn test_lock_twice_unlocks_ok() -> Result<(), Box<dyn Error>> {
     send(&mut view, OTHER, SERVER, b"b")?;
     let text = screen(&view, 80, 20)?;
 
-    assert_eq!(view.stream(), "b");
+    assert_eq!(view.stream(), "ab");
     assert!(text.contains("none (f follows"));
     Ok(())
 }
@@ -621,5 +621,93 @@ fn test_filter_bar_capture_filter_coloured_ok() -> Result<(), Box<dyn Error>> {
 
     assert_eq!(last_color_of(&buffer, "udp"), Some(Color::White));
     assert_eq!(last_color_of(&buffer, "capture"), Some(Color::Gray));
+    Ok(())
+}
+
+#[test]
+fn test_follow_shows_history_before_f_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"GET ")?;
+    send(&mut view, OTHER, SERVER, b"noise ")?;
+    send(&mut view, SERVER, CLIENT, b"200 ")?;
+
+    key(&mut view, KeyCode::Char('f'));
+
+    assert_eq!(view.stream(), "GET 200 ");
+    Ok(())
+}
+
+#[test]
+fn test_live_stream_coloured_by_side_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    send(&mut view, CLIENT, SERVER, b"REQUEST")?;
+    send(&mut view, SERVER, CLIENT, b"RESPONSE")?;
+    let buffer = drawn(&view)?;
+
+    assert_eq!(last_color_of(&buffer, "REQUEST"), Some(Color::LightRed));
+    assert_eq!(last_color_of(&buffer, "RESPONSE"), Some(Color::LightBlue));
+    Ok(())
+}
+
+#[test]
+fn test_clear_while_following_clears_only_that_conversation_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"a")?;
+    send(&mut view, OTHER, SERVER, b"b")?;
+    send(&mut view, CLIENT, SERVER, b"c")?;
+    key(&mut view, KeyCode::Char('f'));
+
+    key(&mut view, KeyCode::Char('c'));
+    let followed = view.stream();
+    key(&mut view, KeyCode::Char('f'));
+
+    assert_eq!(followed, "");
+    assert_eq!(view.stream(), "abc");
+    Ok(())
+}
+
+#[test]
+fn test_clear_live_keeps_conversation_history_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"a")?;
+
+    key(&mut view, KeyCode::Char('c'));
+    let live = view.stream();
+    key(&mut view, KeyCode::Char('f'));
+
+    assert_eq!(live, "");
+    assert_eq!(view.stream(), "a");
+    Ok(())
+}
+
+#[test]
+fn test_follow_survives_conversation_flood_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+    key(&mut view, KeyCode::Char('f'));
+
+    for port in 1..=300 {
+        send(&mut view, (OTHER.0, port), SERVER, b"scan")?;
+    }
+    send(&mut view, SERVER, CLIENT, b"y")?;
+    let text = screen(&view, 100, 20)?;
+
+    assert_eq!(view.stream(), "xy");
+    assert!(text.contains("following TCP 10.0.0.1:51000 <> 10.0.0.2:80"));
+    Ok(())
+}
+
+#[test]
+fn test_paused_records_nothing_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"a")?;
+
+    key(&mut view, KeyCode::Char(' '));
+    send(&mut view, CLIENT, SERVER, b"b")?;
+    key(&mut view, KeyCode::Char(' '));
+    key(&mut view, KeyCode::Char('f'));
+
+    assert_eq!(view.stream(), "a");
     Ok(())
 }

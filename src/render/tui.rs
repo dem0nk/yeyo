@@ -1,25 +1,24 @@
+use super::conversations::{Conversations, Key};
+use super::stream::{Side, Stream};
 use super::summary::summary;
 use super::text::{printable, wrap, wrap_tagged};
 use super::theme::{self, panel};
 use crate::capture::Feed;
 use crate::error::YeyoError;
 use crate::packet::link::LinkType;
-use crate::packet::{Endpoints, Packet, Transport};
+use crate::packet::{Packet, Transport};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame};
-use std::collections::VecDeque;
 use std::io;
-use std::net::SocketAddr;
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 const TICK: Duration = Duration::from_millis(100);
 const MAX_FRAMES_PER_TICK: usize = 10_000;
-const STREAM_LIMIT: usize = 64 * 1024;
 const PROTO_TCP: u8 = 6;
 const KEYS: [(&str, &str); 4] = [
     ("q", "quit"),
@@ -34,49 +33,15 @@ pub enum Flow {
     Quit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Side {
-    Client,
-    Server,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Lock {
-    protocol: u8,
-    client: SocketAddr,
-    server: SocketAddr,
-}
-
-impl Lock {
-    fn side(&self, endpoints: &Endpoints) -> Option<Side> {
-        if endpoints.protocol != self.protocol {
-            return None;
-        }
-        if endpoints.src == self.client && endpoints.dst == self.server {
-            Some(Side::Client)
-        } else if endpoints.src == self.server && endpoints.dst == self.client {
-            Some(Side::Server)
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Chunk {
-    side: Option<Side>,
-    text: String,
-}
-
 #[derive(Debug, Default)]
 pub struct View {
     capture_filter: Option<String>,
     latest: Option<Line<'static>>,
-    latest_endpoints: Option<Endpoints>,
+    latest_key: Option<Key>,
     payload: String,
-    stream: VecDeque<Chunk>,
-    stream_len: usize,
-    lock: Option<Lock>,
+    live: Stream,
+    conversations: Conversations,
+    following: Option<Key>,
     packets: u64,
     ended: bool,
     paused: bool,
@@ -96,15 +61,14 @@ impl View {
         if self.paused {
             return;
         }
-        let endpoints = packet.endpoints();
-        let side = match (self.lock, endpoints) {
-            (None, _) => None,
-            (Some(lock), Some(endpoints)) => match lock.side(&endpoints) {
-                Some(side) => Some(side),
-                None => return,
-            },
-            (Some(_), None) => return,
-        };
+        let payload = printable(packet.payload);
+        let recorded = self.conversations.record(packet, len, &payload);
+        let key = recorded.map(|(key, _)| key);
+        self.live
+            .push(recorded.map(|(_, side)| side), payload.clone());
+        if self.following.is_some() && key != self.following {
+            return;
+        }
         let style = match packet.transport {
             Some(Transport::Tcp(_)) => theme::TCP,
             Some(Transport::Udp(_)) => theme::UDP,
@@ -114,29 +78,25 @@ impl View {
             Span::styled(summary(packet), style),
             Span::styled(format!(" len {len}"), theme::MUTED),
         ]));
-        self.latest_endpoints = endpoints;
-        self.payload = printable(packet.payload);
-        self.push_stream(side, self.payload.clone());
+        self.latest_key = key;
+        self.payload = payload;
     }
 
     pub fn bad(&mut self, len: u32, err: &YeyoError) {
         self.packets += 1;
-        if self.paused || self.lock.is_some() {
+        if self.paused || self.following.is_some() {
             return;
         }
         self.latest = Some(Line::from(vec![
             Span::styled(format!("bad packet: {err}"), theme::BAD),
             Span::styled(format!(", len {len}"), theme::MUTED),
         ]));
-        self.latest_endpoints = None;
+        self.latest_key = None;
         self.payload.clear();
     }
 
     pub fn stream(&self) -> String {
-        self.stream
-            .iter()
-            .map(|chunk| chunk.text.as_str())
-            .collect()
+        self.shown_stream().text()
     }
 
     pub fn end(&mut self) {
@@ -154,7 +114,7 @@ impl View {
             }
             KeyCode::Char(' ') => self.paused = !self.paused,
             KeyCode::Char('c') => self.clear_stream(),
-            KeyCode::Char('f') => self.toggle_lock(),
+            KeyCode::Char('f') => self.toggle_follow(),
             _ => {}
         }
         Flow::Continue
@@ -217,18 +177,21 @@ impl View {
             None => Span::styled("all packets", theme::MUTED),
         });
         spans.push(Span::styled("  │  ", theme::BORDER));
-        spans.extend(self.lock_spans());
+        spans.extend(self.follow_spans());
         Line::from(spans)
     }
 
-    fn lock_spans(&self) -> Vec<Span<'static>> {
-        let Some(lock) = self.lock else {
+    fn follow_spans(&self) -> Vec<Span<'static>> {
+        let followed = self
+            .following
+            .and_then(|key| Some((key, self.conversations.get(&key)?)));
+        let Some((key, conversation)) = followed else {
             return vec![Span::styled(
                 "none (f follows the current packet's conversation)",
                 theme::MUTED,
             )];
         };
-        let protocol = if lock.protocol == PROTO_TCP {
+        let protocol = if key.protocol() == PROTO_TCP {
             "TCP"
         } else {
             "UDP"
@@ -236,24 +199,19 @@ impl View {
         vec![
             Span::styled("following ", theme::FOLLOW),
             Span::raw(format!("{protocol} ")),
-            Span::styled(lock.client.to_string(), theme::CLIENT),
+            Span::styled(conversation.client().to_string(), theme::CLIENT),
             Span::styled(" <> ", theme::MUTED),
-            Span::styled(lock.server.to_string(), theme::SERVER),
+            Span::styled(conversation.server().to_string(), theme::SERVER),
         ]
     }
 
     fn draw_stream(&self, frame: &mut Frame, area: Rect) {
-        let block = match self.lock {
+        let block = match self.following {
             Some(_) => panel("stream").border_style(theme::FOLLOW),
             None => panel("stream"),
         };
         let inner = block.inner(area);
-        let parts: Vec<(Option<Side>, &str)> = self
-            .stream
-            .iter()
-            .map(|chunk| (chunk.side, chunk.text.as_str()))
-            .collect();
-        let rows = wrap_tagged(&parts, usize::from(inner.width));
+        let rows = wrap_tagged(&self.shown_stream().parts(), usize::from(inner.width));
         let start = rows.len().saturating_sub(usize::from(inner.height));
         let lines: Vec<Line> = rows
             .into_iter()
@@ -269,54 +227,30 @@ impl View {
         frame.render_widget(Paragraph::new(lines).block(block), area);
     }
 
-    fn toggle_lock(&mut self) {
-        if self.lock.take().is_some() {
-            self.clear_stream();
-            return;
+    fn shown_stream(&self) -> &Stream {
+        match self.following.and_then(|key| self.conversations.get(&key)) {
+            Some(conversation) => conversation.stream(),
+            None => &self.live,
         }
-        if let Some(endpoints) = self.latest_endpoints {
-            self.lock = Some(Lock {
-                protocol: endpoints.protocol,
-                client: endpoints.src,
-                server: endpoints.dst,
-            });
-            self.clear_stream();
-            self.push_stream(Some(Side::Client), self.payload.clone());
-        }
-    }
-
-    fn push_stream(&mut self, side: Option<Side>, text: String) {
-        if text.is_empty() {
-            return;
-        }
-        self.stream_len += text.len();
-        self.stream.push_back(Chunk { side, text });
-        self.trim_stream();
     }
 
     fn clear_stream(&mut self) {
-        self.stream.clear();
-        self.stream_len = 0;
+        match self
+            .following
+            .and_then(|key| self.conversations.get_mut(&key))
+        {
+            Some(conversation) => conversation.clear(),
+            None => self.live.clear(),
+        }
     }
 
-    fn trim_stream(&mut self) {
-        while self.stream_len > STREAM_LIMIT {
-            let excess = self.stream_len - STREAM_LIMIT;
-            let Some(front) = self.stream.front_mut() else {
-                break;
-            };
-            if front.text.len() <= excess {
-                self.stream_len -= front.text.len();
-                self.stream.pop_front();
-            } else {
-                let mut cut = excess;
-                while !front.text.is_char_boundary(cut) {
-                    cut += 1;
-                }
-                front.text.drain(..cut);
-                self.stream_len -= cut;
-            }
+    fn toggle_follow(&mut self) {
+        if self.following.is_some() {
+            self.following = None;
+        } else {
+            self.following = self.latest_key;
         }
+        self.conversations.pin(self.following);
     }
 }
 
