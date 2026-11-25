@@ -1,4 +1,4 @@
-use super::conversations::{Conversations, Key};
+use super::conversations::{Conversation, Conversations, Key, Target, protocol_name};
 use super::picker::Picker;
 use super::stream::{Side, Stream};
 use super::summary::summary;
@@ -14,19 +14,26 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame};
+use std::cell::Cell;
 use std::io;
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 const TICK: Duration = Duration::from_millis(100);
 const MAX_FRAMES_PER_TICK: usize = 10_000;
-const KEYS: [(&str, &str); 4] = [
+const KEYS: [(&str, &str); 5] = [
     ("q", "quit"),
     ("space", "pause"),
     ("c", "clear"),
     ("f", "follow"),
+    ("↑↓", "scroll"),
 ];
-const PICKER_KEYS: [(&str, &str); 3] = [("↑↓", "move"), ("enter", "follow"), ("esc", "close")];
+const PICKER_KEYS: [(&str, &str); 4] = [
+    ("↑↓", "move"),
+    ("enter", "follow"),
+    ("s", "server"),
+    ("esc", "close"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -39,7 +46,13 @@ enum Mode {
     #[default]
     Live,
     Picking(Picker),
-    Following(Key),
+    Following(Following),
+}
+
+#[derive(Debug)]
+struct Following {
+    target: Target,
+    stream: Stream,
 }
 
 #[derive(Debug, Default)]
@@ -51,6 +64,9 @@ pub struct View {
     live: Stream,
     conversations: Conversations,
     mode: Mode,
+    scroll_top: Option<usize>,
+    page: Cell<usize>,
+    max_top: Cell<usize>,
     packets: u64,
     ended: bool,
     paused: bool,
@@ -75,8 +91,15 @@ impl View {
         let key = recorded.map(|(key, _)| key);
         self.live
             .push(recorded.map(|(_, side)| side), payload.clone());
-        if self.following().is_some() && key != self.following() {
-            return;
+        if let Mode::Following(following) = &mut self.mode {
+            let (Some(key), Some(endpoints)) = (key, packet.endpoints()) else {
+                return;
+            };
+            if !following.target.matches(&key) {
+                return;
+            }
+            let side = following.target.side(&endpoints);
+            following.stream.push(Some(side), payload.clone());
         }
         let style = match packet.transport {
             Some(Transport::Tcp(_)) => theme::TCP,
@@ -93,7 +116,7 @@ impl View {
 
     pub fn bad(&mut self, len: u32, err: &YeyoError) {
         self.packets += 1;
-        if self.paused || self.following().is_some() {
+        if self.paused || matches!(self.mode, Mode::Following(_)) {
             return;
         }
         self.latest = Some(Line::from(vec![
@@ -124,7 +147,8 @@ impl View {
                 KeyCode::Char('q') => return Flow::Quit,
                 KeyCode::Up | KeyCode::Char('k') => picker.up(),
                 KeyCode::Down | KeyCode::Char('j') => picker.down(),
-                KeyCode::Enter => self.follow_selected(),
+                KeyCode::Enter => self.follow_selected(Target::connection),
+                KeyCode::Char('s') => self.follow_selected(Target::server),
                 KeyCode::Esc | KeyCode::Char('f') => self.mode = Mode::Live,
                 _ => {}
             }
@@ -135,6 +159,12 @@ impl View {
             KeyCode::Char(' ') => self.paused = !self.paused,
             KeyCode::Char('c') => self.clear_stream(),
             KeyCode::Char('f') => self.toggle_follow(),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_up(1),
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_down(1),
+            KeyCode::PageUp => self.scroll_up(self.page.get()),
+            KeyCode::PageDown => self.scroll_down(self.page.get()),
+            KeyCode::Home | KeyCode::Char('g') => self.scroll_up(usize::MAX),
+            KeyCode::End | KeyCode::Char('G') => self.scroll_top = None,
             _ => {}
         }
         Flow::Continue
@@ -165,13 +195,20 @@ impl View {
         let shown = &rows[..rows.len().min(usize::from(inner.height))];
         frame.render_widget(Paragraph::new(shown.join("\n")).block(block), payload);
         self.draw_stream(frame, stream);
-        frame.render_widget(Paragraph::new(self.footer_line()), footer);
+        let status = self.status_line();
+        let [keys, status_area] = Layout::horizontal([
+            Constraint::Min(0),
+            Constraint::Length(u16::try_from(status.width()).unwrap_or(u16::MAX)),
+        ])
+        .areas(footer);
+        frame.render_widget(Paragraph::new(self.keys_line()), keys);
+        frame.render_widget(Paragraph::new(status), status_area);
         if let Mode::Picking(picker) = &self.mode {
             picker.draw(frame, &self.conversations);
         }
     }
 
-    fn footer_line(&self) -> Line<'static> {
+    fn keys_line(&self) -> Line<'static> {
         let mut spans = vec![Span::raw(" ")];
         let keys: &[(&str, &str)] = match self.mode {
             Mode::Picking(_) => &PICKER_KEYS,
@@ -181,6 +218,10 @@ impl View {
             spans.push(Span::styled(format!(" {key} "), theme::KEY));
             spans.push(Span::styled(format!(" {label}  "), theme::HINT));
         }
+        Line::from(spans)
+    }
+
+    fn status_line(&self) -> Line<'static> {
         let count = match self.packets {
             1 => "1 packet".to_string(),
             n => format!("{n} packets"),
@@ -192,9 +233,11 @@ impl View {
         } else {
             ("capturing", theme::CAPTURING)
         };
-        spans.push(Span::styled(format!("{count} | "), theme::HINT));
-        spans.push(Span::styled(state, style));
-        Line::from(spans)
+        Line::from(vec![
+            Span::styled(format!("{count} | "), theme::HINT),
+            Span::styled(state, style),
+            Span::raw(" "),
+        ])
     }
 
     fn filter_line(&self) -> Line<'static> {
@@ -209,32 +252,55 @@ impl View {
     }
 
     fn follow_spans(&self) -> Vec<Span<'static>> {
-        let followed = self
-            .following()
-            .and_then(|key| Some((key, self.conversations.get(&key)?)));
-        let Some((key, conversation)) = followed else {
+        let Mode::Following(following) = &self.mode else {
             return vec![Span::styled("none (f picks a conversation)", theme::MUTED)];
         };
-        vec![
-            Span::styled("following ", theme::FOLLOW),
-            Span::raw(format!("{} ", key.protocol_name())),
-            Span::styled(conversation.client().to_string(), theme::CLIENT),
-            Span::styled(" <> ", theme::MUTED),
-            Span::styled(conversation.server().to_string(), theme::SERVER),
-        ]
+        match following.target {
+            Target::Connection {
+                key,
+                client,
+                server,
+            } => vec![
+                Span::styled("following ", theme::FOLLOW),
+                Span::raw(format!("{} ", key.protocol_name())),
+                Span::styled(client.to_string(), theme::CLIENT),
+                Span::styled(" <> ", theme::MUTED),
+                Span::styled(server.to_string(), theme::SERVER),
+            ],
+            Target::Server {
+                protocol,
+                client,
+                server,
+            } => vec![
+                Span::styled("following server ", theme::FOLLOW),
+                Span::raw(format!("{} ", protocol_name(protocol))),
+                Span::styled(client.to_string(), theme::CLIENT),
+                Span::styled(" > ", theme::MUTED),
+                Span::styled(server.to_string(), theme::SERVER),
+            ],
+        }
     }
 
     fn draw_stream(&self, frame: &mut Frame, area: Rect) {
-        let block = match self.following() {
-            Some(_) => panel("stream").border_style(theme::FOLLOW),
-            None => panel("stream"),
+        let mut block = match self.mode {
+            Mode::Following(_) => panel("stream").border_style(theme::FOLLOW),
+            _ => panel("stream"),
         };
+        if self.scroll_top.is_some() {
+            block =
+                block.title(Line::styled(" scrolled · End = live ", theme::FOLLOW).right_aligned());
+        }
         let inner = block.inner(area);
+        let height = usize::from(inner.height);
         let rows = wrap_tagged(&self.shown_stream().parts(), usize::from(inner.width));
-        let start = rows.len().saturating_sub(usize::from(inner.height));
+        let max_top = rows.len().saturating_sub(height);
+        self.page.set(height.max(1));
+        self.max_top.set(max_top);
+        let start = self.scroll_top.map_or(max_top, |top| top.min(max_top));
         let lines: Vec<Line> = rows
             .into_iter()
             .skip(start)
+            .take(height)
             .map(|row| {
                 let spans: Vec<Span> = row
                     .into_iter()
@@ -247,52 +313,64 @@ impl View {
     }
 
     fn shown_stream(&self) -> &Stream {
-        match self
-            .following()
-            .and_then(|key| self.conversations.get(&key))
-        {
-            Some(conversation) => conversation.stream(),
-            None => &self.live,
+        match &self.mode {
+            Mode::Following(following) => &following.stream,
+            _ => &self.live,
         }
+    }
+
+    fn scroll_up(&mut self, rows: usize) {
+        let max_top = self.max_top.get();
+        if max_top == 0 {
+            return;
+        }
+        let top = self.scroll_top.unwrap_or(max_top).min(max_top);
+        self.scroll_top = Some(top.saturating_sub(rows));
+    }
+
+    fn scroll_down(&mut self, rows: usize) {
+        let Some(top) = self.scroll_top else {
+            return;
+        };
+        let top = top.saturating_add(rows);
+        self.scroll_top = (top < self.max_top.get()).then_some(top);
     }
 
     fn clear_stream(&mut self) {
-        match self
-            .following()
-            .and_then(|key| self.conversations.get_mut(&key))
-        {
-            Some(conversation) => conversation.clear(),
-            None => self.live.clear(),
-        }
-    }
-
-    fn following(&self) -> Option<Key> {
-        match self.mode {
-            Mode::Following(key) => Some(key),
-            _ => None,
+        self.scroll_top = None;
+        match &mut self.mode {
+            Mode::Following(following) => following.stream.clear(),
+            _ => self.live.clear(),
         }
     }
 
     fn toggle_follow(&mut self) {
-        if self.following().is_some() {
-            self.mode = Mode::Live;
-            self.conversations.pin(None);
-        } else {
-            self.mode = Mode::Picking(Picker::open(&self.conversations, self.latest_key));
-        }
+        self.scroll_top = None;
+        self.mode = match self.mode {
+            Mode::Following(_) => Mode::Live,
+            _ => Mode::Picking(Picker::open(&self.conversations, self.latest_key)),
+        };
     }
 
-    fn follow_selected(&mut self) {
+    fn follow_selected(&mut self, target: fn(Key, &Conversation) -> Target) {
         let Mode::Picking(picker) = &self.mode else {
             return;
         };
         let Some(key) = picker.selected() else {
             return;
         };
-        if self.conversations.get(&key).is_some() {
-            self.mode = Mode::Following(key);
-            self.conversations.pin(Some(key));
+        let Some(conversation) = self.conversations.get(&key) else {
+            return;
+        };
+        let target = target(key, conversation);
+        let mut stream = Stream::default();
+        for conversation in self.conversations.matching(&target) {
+            for (side, text) in conversation.stream().parts() {
+                stream.push(side, text.to_string());
+            }
         }
+        self.mode = Mode::Following(Following { target, stream });
+        self.scroll_top = None;
     }
 }
 

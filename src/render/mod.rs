@@ -7,7 +7,7 @@ mod text;
 mod theme;
 mod tui;
 
-pub use conversations::{Conversation, Conversations, Key};
+pub use conversations::{Conversation, Conversations, Key, Target};
 pub use lines::{Lines, print_lines};
 pub use stream::{Side, Stream};
 pub use text::{human_bytes, printable, wrap, wrap_tagged};

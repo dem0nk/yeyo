@@ -892,6 +892,7 @@ fn test_picker_evicted_row_cannot_be_followed_ok() -> Result<(), Box<dyn Error>>
 fn test_picker_rows_coloured_and_selected_highlighted_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"x")?;
+    send(&mut view, OTHER, SERVER, b"y")?;
 
     key(&mut view, KeyCode::Char('f'));
     let buffer = drawn(&view)?;
@@ -900,16 +901,14 @@ fn test_picker_rows_coloured_and_selected_highlighted_ok() -> Result<(), Box<dyn
         last_color_of(&buffer, "10.0.0.1:51000"),
         Some(Color::LightRed)
     );
-    assert_eq!(
-        last_color_of(&buffer, "10.0.0.2:80"),
-        Some(Color::LightBlue)
-    );
     let marker = buffer
         .content
         .iter()
         .find(|cell| cell.symbol() == "▶")
         .ok_or("no selection marker")?;
-    assert_eq!(marker.bg, Color::DarkGray);
+    assert_eq!(marker.bg, Color::Cyan);
+    assert_eq!(marker.fg, Color::Black);
+    assert_eq!(last_color_of(&buffer, "10.0.0.9:4444"), Some(Color::Black));
     Ok(())
 }
 
@@ -951,5 +950,350 @@ fn test_picker_footer_shows_picker_keys_ok() -> Result<(), Box<dyn Error>> {
 
     assert!(text.contains("enter  follow"));
     assert!(!text.contains("space  pause"));
+    Ok(())
+}
+
+const LATER: ([u8; 4], u16) = ([10, 0, 0, 1], 51007);
+
+fn follow_server(view: &mut View) {
+    key(view, KeyCode::Char('f'));
+    key(view, KeyCode::Char('s'));
+}
+
+#[test]
+fn test_server_follow_merges_earlier_connections_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"GET1 ")?;
+    send(&mut view, SERVER, CLIENT, b"OK1 ")?;
+    send(&mut view, LATER, SERVER, b"GET2 ")?;
+    send(&mut view, SERVER, LATER, b"OK2 ")?;
+
+    follow_server(&mut view);
+
+    assert_eq!(view.stream(), "GET1 OK1 GET2 OK2 ");
+    Ok(())
+}
+
+#[test]
+fn test_server_follow_includes_new_connections_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"GET1 ")?;
+    follow_server(&mut view);
+
+    send(&mut view, LATER, SERVER, b"GET2 ")?;
+    send(&mut view, SERVER, LATER, b"OK2 ")?;
+    let buffer = drawn(&view)?;
+
+    assert_eq!(view.stream(), "GET1 GET2 OK2 ");
+    assert_eq!(last_color_of(&buffer, "GET2"), Some(Color::LightRed));
+    assert_eq!(last_color_of(&buffer, "OK2"), Some(Color::LightBlue));
+    Ok(())
+}
+
+#[test]
+fn test_server_follow_excludes_other_port_and_client_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"mine ")?;
+    follow_server(&mut view);
+
+    send(&mut view, LATER, (SERVER.0, 443), b"tls ")?;
+    send(&mut view, OTHER, SERVER, b"other ")?;
+    let udp = common::udp(LATER.1, SERVER.1, b"udp ");
+    view.packet(
+        64,
+        &Packet::parse(LinkType::Raw, &common::ipv4(17, LATER.0, SERVER.0, &udp))?,
+    );
+
+    assert_eq!(view.stream(), "mine ");
+    Ok(())
+}
+
+#[test]
+fn test_server_follow_shown_in_filter_bar_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+
+    follow_server(&mut view);
+    let text = text_of(&view)?;
+
+    assert!(text.contains("following server TCP 10.0.0.1 > 10.0.0.2:80"));
+    Ok(())
+}
+
+#[test]
+fn test_enter_still_follows_one_connection_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"GET1 ")?;
+    follow(&mut view);
+
+    send(&mut view, LATER, SERVER, b"GET2 ")?;
+
+    assert_eq!(view.stream(), "GET1 ");
+    Ok(())
+}
+
+#[test]
+fn test_server_follow_clear_then_continues_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"old ")?;
+    follow_server(&mut view);
+
+    key(&mut view, KeyCode::Char('c'));
+    send(&mut view, LATER, SERVER, b"new ")?;
+
+    assert_eq!(view.stream(), "new ");
+    Ok(())
+}
+
+#[test]
+fn test_server_follow_history_capped_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let chunk = vec![b'x'; 1000];
+    for port in 1..=100 {
+        send(&mut view, ([10, 0, 0, 1], port), SERVER, &chunk)?;
+    }
+
+    follow_server(&mut view);
+
+    assert_eq!(view.stream().len(), 64 * 1024);
+    Ok(())
+}
+
+#[test]
+fn test_picker_footer_shows_server_key_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    key(&mut view, KeyCode::Char('f'));
+
+    assert!(text_of(&view)?.contains("s  server"));
+    Ok(())
+}
+
+#[test]
+fn test_server_follow_on_empty_picker_does_nothing_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    follow_server(&mut view);
+    let text = text_of(&view)?;
+
+    assert!(text.contains("no conversations yet"));
+    assert!(!text.contains("following"));
+    Ok(())
+}
+
+fn numbered(view: &mut View, from: usize, to: usize) -> Result<(), Box<dyn Error>> {
+    let text: Vec<String> = (from..to).map(|n| format!("line {n:02}")).collect();
+    tcp_payload(view, text.join("\n").as_bytes())
+}
+
+fn scrolled_screen(view: &mut View, keys: &[KeyCode]) -> Result<String, Box<dyn Error>> {
+    screen(view, 80, 20)?;
+    for &code in keys {
+        key(view, code);
+        screen(view, 80, 20)?;
+    }
+    screen(view, 80, 20)
+}
+
+#[test]
+fn test_scroll_live_shows_newest_rows_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let text = scrolled_screen(&mut view, &[])?;
+
+    assert!(text.contains("line 29"));
+    assert!(text.contains("line 24"));
+    assert!(!text.contains("line 23"));
+    assert!(!text.contains("scrolled"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_up_shows_older_row_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let text = scrolled_screen(&mut view, &[KeyCode::Up])?;
+
+    assert!(text.contains("line 23"));
+    assert!(!text.contains("line 29"));
+    assert!(text.contains("scrolled · End = live"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_k_j_like_arrows_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let up = scrolled_screen(&mut view, &[KeyCode::Char('k'), KeyCode::Char('k')])?;
+    let down = scrolled_screen(&mut view, &[KeyCode::Char('j')])?;
+
+    assert!(up.contains("line 22") && !up.contains("line 28"));
+    assert!(down.contains("line 23") && !down.contains("line 29"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_end_returns_to_live_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let text = scrolled_screen(&mut view, &[KeyCode::PageUp, KeyCode::Up, KeyCode::End])?;
+
+    assert!(text.contains("line 29"));
+    assert!(!text.contains("scrolled"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_position_kept_when_new_data_arrives_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+    scrolled_screen(&mut view, &[KeyCode::Up])?;
+
+    tcp_payload(&mut view, b"\n")?;
+    numbered(&mut view, 30, 40)?;
+    let text = scrolled_screen(&mut view, &[])?;
+
+    assert!(text.contains("line 23"));
+    assert!(!text.contains("line 39"));
+    assert!(text.contains("scrolled"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_live_follows_new_data_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+    scrolled_screen(&mut view, &[])?;
+
+    tcp_payload(&mut view, b"\n")?;
+    numbered(&mut view, 30, 40)?;
+    let text = scrolled_screen(&mut view, &[])?;
+
+    assert!(text.contains("line 39"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_home_shows_oldest_and_up_clamps_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let text = scrolled_screen(&mut view, &[KeyCode::Home, KeyCode::Up, KeyCode::Up])?;
+    let g = scrolled_screen(&mut view, &[KeyCode::End, KeyCode::Char('g')])?;
+
+    assert!(text.contains("line 00"));
+    assert!(!text.contains("line 06"));
+    assert!(g.contains("line 00"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_down_past_bottom_goes_live_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let text = scrolled_screen(
+        &mut view,
+        &[KeyCode::Up, KeyCode::Up, KeyCode::Down, KeyCode::Down],
+    )?;
+    let more = scrolled_screen(&mut view, &[KeyCode::Down, KeyCode::Down])?;
+
+    assert!(text.contains("line 29"));
+    assert!(!text.contains("scrolled"));
+    assert!(more.contains("line 29"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_page_up_and_down_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let up = scrolled_screen(&mut view, &[KeyCode::PageUp])?;
+    let down = scrolled_screen(&mut view, &[KeyCode::PageDown])?;
+
+    assert!(up.contains("line 18") && up.contains("line 23"));
+    assert!(!up.contains("line 24"));
+    assert!(down.contains("line 29"));
+    assert!(!down.contains("scrolled"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_reset_by_clear_and_follow_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let cleared = scrolled_screen(&mut view, &[KeyCode::Up, KeyCode::Char('c')])?;
+    numbered(&mut view, 0, 30)?;
+    let followed = scrolled_screen(
+        &mut view,
+        &[KeyCode::Up, KeyCode::Char('f'), KeyCode::Enter],
+    )?;
+    let unfollowed = scrolled_screen(&mut view, &[KeyCode::Up, KeyCode::Char('f')])?;
+
+    assert!(!cleared.contains("scrolled"));
+    assert!(!followed.contains("scrolled"));
+    assert!(followed.contains("line 29"));
+    assert!(!unfollowed.contains("scrolled"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_picker_arrows_do_not_scroll_stream_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    let text = scrolled_screen(&mut view, &[KeyCode::Char('f'), KeyCode::Up, KeyCode::Esc])?;
+
+    assert!(text.contains("line 29"));
+    assert!(!text.contains("scrolled"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_short_or_empty_stream_stays_live_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    let empty = scrolled_screen(&mut view, &[KeyCode::Up, KeyCode::Home, KeyCode::PageUp])?;
+    numbered(&mut view, 0, 3)?;
+    let short = scrolled_screen(&mut view, &[KeyCode::Up, KeyCode::Home])?;
+
+    assert!(!empty.contains("scrolled"));
+    assert!(!short.contains("scrolled"));
+    assert!(short.contains("line 00") && short.contains("line 02"));
+    Ok(())
+}
+
+#[test]
+fn test_scroll_tiny_terminal_no_panic_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    numbered(&mut view, 0, 30)?;
+
+    for (width, height) in [(1, 1), (10, 5), (3, 40), (200, 2)] {
+        screen(&view, width, height)?;
+        for code in [
+            KeyCode::PageUp,
+            KeyCode::Up,
+            KeyCode::Home,
+            KeyCode::PageDown,
+            KeyCode::End,
+        ] {
+            key(&mut view, code);
+            screen(&view, width, height)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_footer_status_visible_with_all_keys_ok() -> Result<(), Box<dyn Error>> {
+    let text = screen(&View::default(), 60, 20)?;
+
+    assert!(text.contains("0 packets | capturing"));
     Ok(())
 }

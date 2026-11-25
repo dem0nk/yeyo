@@ -3,7 +3,7 @@ mod common;
 use std::error::Error;
 use yeyo::packet::link::LinkType;
 use yeyo::packet::{Endpoints, Packet};
-use yeyo::render::{Conversations, Key, Side};
+use yeyo::render::{Conversations, Key, Side, Target};
 
 const CLIENT: ([u8; 4], u16) = ([10, 0, 0, 1], 51000);
 const SERVER: ([u8; 4], u16) = ([10, 0, 0, 2], 80);
@@ -158,44 +158,6 @@ fn test_evicts_quietest_when_full_ok() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn test_pinned_survives_eviction_ok() -> Result<(), Box<dyn Error>> {
-    let mut table = Conversations::default();
-    record(&mut table, &tcp(CLIENT, SERVER, 0x18, b""), "")?;
-    table.pin(Some(key_of(6, CLIENT, SERVER)));
-
-    for port in 1..=300 {
-        record(
-            &mut table,
-            &tcp(([10, 0, 0, 9], port), SERVER, 0x18, b""),
-            "",
-        )?;
-    }
-
-    assert_eq!(table.len(), 128);
-    assert!(table.get(&key_of(6, CLIENT, SERVER)).is_some());
-    Ok(())
-}
-
-#[test]
-fn test_unpinned_can_be_evicted_again_ok() -> Result<(), Box<dyn Error>> {
-    let mut table = Conversations::default();
-    record(&mut table, &tcp(CLIENT, SERVER, 0x18, b""), "")?;
-    table.pin(Some(key_of(6, CLIENT, SERVER)));
-    table.pin(None);
-
-    for port in 1..=128 {
-        record(
-            &mut table,
-            &tcp(([10, 0, 0, 9], port), SERVER, 0x18, b""),
-            "",
-        )?;
-    }
-
-    assert!(table.get(&key_of(6, CLIENT, SERVER)).is_none());
-    Ok(())
-}
-
-#[test]
 fn test_flood_stays_bounded_ok() -> Result<(), Box<dyn Error>> {
     let mut table = Conversations::default();
 
@@ -216,20 +178,6 @@ fn test_huge_payload_capped_ok() -> Result<(), Box<dyn Error>> {
 
     let conversation = table.get(&key_of(6, CLIENT, SERVER)).ok_or("missing")?;
     assert_eq!(conversation.stream().len(), 64 * 1024);
-    Ok(())
-}
-
-#[test]
-fn test_clear_empties_only_stream_ok() -> Result<(), Box<dyn Error>> {
-    let mut table = Conversations::default();
-    record(&mut table, &tcp(CLIENT, SERVER, 0x18, b"a"), "a")?;
-    let key = key_of(6, CLIENT, SERVER);
-
-    table.get_mut(&key).ok_or("missing")?.clear();
-
-    let conversation = table.get(&key).ok_or("missing")?;
-    assert!(conversation.stream().is_empty());
-    assert_eq!(conversation.packets(), 1);
     Ok(())
 }
 
@@ -258,4 +206,107 @@ fn test_recent_empty_ok() {
 fn test_key_protocol_name_ok() {
     assert_eq!(key_of(6, CLIENT, SERVER).protocol_name(), "TCP");
     assert_eq!(key_of(17, CLIENT, SERVER).protocol_name(), "UDP");
+}
+
+fn target_for(
+    table: &Conversations,
+    key: Key,
+    make: fn(Key, &yeyo::render::Conversation) -> Target,
+) -> Result<Target, Box<dyn Error>> {
+    Ok(make(key, table.get(&key).ok_or("missing conversation")?))
+}
+
+#[test]
+fn test_target_connection_matches_only_its_key_ok() -> Result<(), Box<dyn Error>> {
+    let mut table = Conversations::default();
+    let later = ([10, 0, 0, 1], 51007);
+    record(&mut table, &tcp(CLIENT, SERVER, 0x02, b""), "")?;
+
+    let target = target_for(&table, key_of(6, CLIENT, SERVER), Target::connection)?;
+
+    assert!(target.matches(&key_of(6, SERVER, CLIENT)));
+    assert!(!target.matches(&key_of(6, later, SERVER)));
+    Ok(())
+}
+
+#[test]
+fn test_target_server_matches_new_client_ports_ok() -> Result<(), Box<dyn Error>> {
+    let mut table = Conversations::default();
+    record(&mut table, &tcp(CLIENT, SERVER, 0x02, b""), "")?;
+
+    let target = target_for(&table, key_of(6, CLIENT, SERVER), Target::server)?;
+
+    assert!(target.matches(&key_of(6, ([10, 0, 0, 1], 51007), SERVER)));
+    assert!(target.matches(&key_of(6, SERVER, ([10, 0, 0, 1], 60000))));
+    Ok(())
+}
+
+#[test]
+fn test_target_server_rejects_other_port_client_or_protocol_ok() -> Result<(), Box<dyn Error>> {
+    let mut table = Conversations::default();
+    record(&mut table, &tcp(CLIENT, SERVER, 0x02, b""), "")?;
+
+    let target = target_for(&table, key_of(6, CLIENT, SERVER), Target::server)?;
+
+    assert!(!target.matches(&key_of(6, CLIENT, ([10, 0, 0, 2], 443))));
+    assert!(!target.matches(&key_of(6, ([10, 0, 0, 9], 51000), SERVER)));
+    assert!(!target.matches(&key_of(17, CLIENT, SERVER)));
+    Ok(())
+}
+
+#[test]
+fn test_target_server_uses_roles_not_key_order_ok() -> Result<(), Box<dyn Error>> {
+    let mut table = Conversations::default();
+    let client = ([10, 0, 0, 200], 51000);
+    let server = ([10, 0, 0, 2], 80);
+    record(&mut table, &tcp(client, server, 0x02, b""), "")?;
+
+    let target = target_for(&table, key_of(6, client, server), Target::server)?;
+
+    assert!(target.matches(&key_of(6, ([10, 0, 0, 200], 40000), server)));
+    Ok(())
+}
+
+#[test]
+fn test_target_side_on_localhost_ok() -> Result<(), Box<dyn Error>> {
+    let mut table = Conversations::default();
+    let client = ([127, 0, 0, 1], 51000);
+    let server = ([127, 0, 0, 1], 8080);
+    record(&mut table, &tcp(client, server, 0x02, b""), "")?;
+    let target = target_for(&table, key_of(6, client, server), Target::server)?;
+
+    let reply = Endpoints {
+        protocol: 6,
+        src: (server.0, server.1).into(),
+        dst: (client.0, client.1).into(),
+    };
+    let request = Endpoints {
+        protocol: 6,
+        src: (client.0, 52000).into(),
+        dst: (server.0, server.1).into(),
+    };
+
+    assert_eq!(target.side(&reply), Side::Server);
+    assert_eq!(target.side(&request), Side::Client);
+    assert!(target.matches(&key_of(6, ([127, 0, 0, 1], 52000), server)));
+    Ok(())
+}
+
+#[test]
+fn test_matching_oldest_conversation_first_ok() -> Result<(), Box<dyn Error>> {
+    let mut table = Conversations::default();
+    let second = ([10, 0, 0, 1], 51007);
+    record(&mut table, &tcp(CLIENT, SERVER, 0x02, b""), "first")?;
+    record(&mut table, &tcp(second, SERVER, 0x02, b""), "second")?;
+    record(&mut table, &tcp(CLIENT, SERVER, 0x18, b""), " again")?;
+
+    let target = target_for(&table, key_of(6, CLIENT, SERVER), Target::server)?;
+    let texts: Vec<String> = table
+        .matching(&target)
+        .iter()
+        .map(|conversation| conversation.stream().text())
+        .collect();
+
+    assert_eq!(texts, ["first again", "second"]);
+    Ok(())
 }

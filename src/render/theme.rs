@@ -20,7 +20,8 @@ pub(super) const OTHER: Style = Style::new().fg(Color::LightMagenta);
 pub(super) const BAD: Style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
 
 pub(super) const SELECTED: Style = Style::new()
-    .bg(Color::DarkGray)
+    .fg(Color::Black)
+    .bg(Color::Cyan)
     .add_modifier(Modifier::BOLD);
 
 pub(super) const CLIENT: Style = Style::new().fg(Color::LightRed);

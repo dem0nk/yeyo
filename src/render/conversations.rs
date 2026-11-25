@@ -2,7 +2,7 @@ use super::stream::{Side, Stream};
 use crate::packet::tcp::TcpFlags;
 use crate::packet::{Endpoints, Packet, Transport};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 const MAX_CONVERSATIONS: usize = 128;
 const PROTO_TCP: u8 = 6;
@@ -33,10 +33,69 @@ impl Key {
     }
 
     pub fn protocol_name(&self) -> &'static str {
-        if self.protocol == PROTO_TCP {
-            "TCP"
+        protocol_name(self.protocol)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Connection {
+        key: Key,
+        client: SocketAddr,
+        server: SocketAddr,
+    },
+    Server {
+        protocol: u8,
+        client: IpAddr,
+        server: SocketAddr,
+    },
+}
+
+impl Target {
+    pub fn connection(key: Key, conversation: &Conversation) -> Self {
+        Self::Connection {
+            key,
+            client: conversation.client,
+            server: conversation.server,
+        }
+    }
+
+    pub fn server(key: Key, conversation: &Conversation) -> Self {
+        Self::Server {
+            protocol: key.protocol,
+            client: conversation.client.ip(),
+            server: conversation.server,
+        }
+    }
+
+    pub fn matches(&self, key: &Key) -> bool {
+        match *self {
+            Self::Connection { key: wanted, .. } => *key == wanted,
+            Self::Server {
+                protocol,
+                client,
+                server,
+            } => {
+                let other = if key.a == server {
+                    key.b
+                } else if key.b == server {
+                    key.a
+                } else {
+                    return false;
+                };
+                key.protocol == protocol && other.ip() == client
+            }
+        }
+    }
+
+    pub fn side(&self, endpoints: &Endpoints) -> Side {
+        let server = match *self {
+            Self::Connection { server, .. } | Self::Server { server, .. } => server,
+        };
+        if endpoints.src == server {
+            Side::Server
         } else {
-            "UDP"
+            Side::Client
         }
     }
 }
@@ -47,6 +106,7 @@ pub struct Conversation {
     server: SocketAddr,
     packets: u64,
     bytes: u64,
+    first_seen: u64,
     last_active: u64,
     stream: Stream,
 }
@@ -72,10 +132,6 @@ impl Conversation {
         &self.stream
     }
 
-    pub fn clear(&mut self) {
-        self.stream.clear();
-    }
-
     fn side(&self, src: SocketAddr) -> Side {
         if src == self.client {
             Side::Client
@@ -89,7 +145,6 @@ impl Conversation {
 pub struct Conversations {
     map: HashMap<Key, Conversation>,
     clock: u64,
-    pinned: Option<Key>,
 }
 
 impl Conversations {
@@ -100,6 +155,7 @@ impl Conversations {
             self.evict_quietest();
         }
         self.clock += 1;
+        let clock = self.clock;
         let conversation = self.map.entry(key).or_insert_with(|| {
             let (client, server) = roles(packet, endpoints);
             Conversation {
@@ -107,13 +163,14 @@ impl Conversations {
                 server,
                 packets: 0,
                 bytes: 0,
+                first_seen: clock,
                 last_active: 0,
                 stream: Stream::default(),
             }
         });
         conversation.packets += 1;
         conversation.bytes += u64::from(len);
-        conversation.last_active = self.clock;
+        conversation.last_active = clock;
         let side = conversation.side(endpoints.src);
         conversation.stream.push(Some(side), text.to_string());
         Some((key, side))
@@ -123,18 +180,21 @@ impl Conversations {
         self.map.get(key)
     }
 
-    pub fn get_mut(&mut self, key: &Key) -> Option<&mut Conversation> {
-        self.map.get_mut(key)
-    }
-
     pub fn recent(&self) -> Vec<Key> {
         let mut entries: Vec<(&Key, &Conversation)> = self.map.iter().collect();
         entries.sort_by_key(|(_, conversation)| std::cmp::Reverse(conversation.last_active));
         entries.into_iter().map(|(key, _)| *key).collect()
     }
 
-    pub fn pin(&mut self, key: Option<Key>) {
-        self.pinned = key;
+    pub fn matching(&self, target: &Target) -> Vec<&Conversation> {
+        let mut found: Vec<&Conversation> = self
+            .map
+            .iter()
+            .filter(|(key, _)| target.matches(key))
+            .map(|(_, conversation)| conversation)
+            .collect();
+        found.sort_by_key(|conversation| conversation.first_seen);
+        found
     }
 
     pub fn len(&self) -> usize {
@@ -149,7 +209,6 @@ impl Conversations {
         let quietest = self
             .map
             .iter()
-            .filter(|(key, _)| Some(**key) != self.pinned)
             .min_by_key(|(_, conversation)| conversation.last_active)
             .map(|(key, _)| *key);
         if let Some(key) = quietest {
@@ -167,4 +226,8 @@ fn roles(packet: &Packet<'_>, endpoints: Endpoints) -> (SocketAddr, SocketAddr) 
         }
         _ => (endpoints.src, endpoints.dst),
     }
+}
+
+pub(super) fn protocol_name(protocol: u8) -> &'static str {
+    if protocol == PROTO_TCP { "TCP" } else { "UDP" }
 }
