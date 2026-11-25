@@ -1,4 +1,4 @@
-use yeyo::render::{printable, wrap, wrap_tagged};
+use yeyo::render::{human_bytes, printable, wrap, wrap_tagged};
 
 #[test]
 fn test_printable_plain_ascii_ok() {
@@ -150,4 +150,15 @@ fn test_wrap_tagged_empty_parts_ok() {
     let rows = wrap_tagged::<u8>(&[], 10);
 
     assert_eq!(rows, [Vec::<(u8, String)>::new()]);
+}
+
+#[test]
+fn test_human_bytes_boundaries_ok() {
+    assert_eq!(human_bytes(0), "0 B");
+    assert_eq!(human_bytes(1023), "1023 B");
+    assert_eq!(human_bytes(1024), "1.0 KiB");
+    assert_eq!(human_bytes(1536), "1.5 KiB");
+    assert_eq!(human_bytes(1024 * 1024 - 1), "1.0 MiB");
+    assert_eq!(human_bytes(1024 * 1024), "1.0 MiB");
+    assert_eq!(human_bytes(u64::MAX), "16.0 EiB");
 }

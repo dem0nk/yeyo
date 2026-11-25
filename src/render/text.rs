@@ -19,6 +19,20 @@ pub fn printable(bytes: &[u8]) -> String {
     out
 }
 
+pub fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = 0;
+    while value >= 1023.95 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{value:.1} {}", UNITS[unit])
+}
+
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
     wrap_tagged(&[((), text)], width)
         .into_iter()

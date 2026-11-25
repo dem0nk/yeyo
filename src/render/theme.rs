@@ -19,6 +19,10 @@ pub(super) const UDP: Style = Style::new().fg(Color::LightGreen);
 pub(super) const OTHER: Style = Style::new().fg(Color::LightMagenta);
 pub(super) const BAD: Style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
 
+pub(super) const SELECTED: Style = Style::new()
+    .bg(Color::DarkGray)
+    .add_modifier(Modifier::BOLD);
+
 pub(super) const CLIENT: Style = Style::new().fg(Color::LightRed);
 pub(super) const SERVER: Style = Style::new().fg(Color::LightBlue);
 pub(super) const FOLLOW: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);

@@ -1,4 +1,5 @@
 use super::conversations::{Conversations, Key};
+use super::picker::Picker;
 use super::stream::{Side, Stream};
 use super::summary::summary;
 use super::text::{printable, wrap, wrap_tagged};
@@ -19,18 +20,26 @@ use std::time::Duration;
 
 const TICK: Duration = Duration::from_millis(100);
 const MAX_FRAMES_PER_TICK: usize = 10_000;
-const PROTO_TCP: u8 = 6;
 const KEYS: [(&str, &str); 4] = [
     ("q", "quit"),
     ("space", "pause"),
     ("c", "clear"),
     ("f", "follow"),
 ];
+const PICKER_KEYS: [(&str, &str); 3] = [("↑↓", "move"), ("enter", "follow"), ("esc", "close")];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
     Continue,
     Quit,
+}
+
+#[derive(Debug, Default)]
+enum Mode {
+    #[default]
+    Live,
+    Picking(Picker),
+    Following(Key),
 }
 
 #[derive(Debug, Default)]
@@ -41,7 +50,7 @@ pub struct View {
     payload: String,
     live: Stream,
     conversations: Conversations,
-    following: Option<Key>,
+    mode: Mode,
     packets: u64,
     ended: bool,
     paused: bool,
@@ -66,7 +75,7 @@ impl View {
         let key = recorded.map(|(key, _)| key);
         self.live
             .push(recorded.map(|(_, side)| side), payload.clone());
-        if self.following.is_some() && key != self.following {
+        if self.following().is_some() && key != self.following() {
             return;
         }
         let style = match packet.transport {
@@ -84,7 +93,7 @@ impl View {
 
     pub fn bad(&mut self, len: u32, err: &YeyoError) {
         self.packets += 1;
-        if self.paused || self.following.is_some() {
+        if self.paused || self.following().is_some() {
             return;
         }
         self.latest = Some(Line::from(vec![
@@ -107,11 +116,22 @@ impl View {
         if key.kind != KeyEventKind::Press {
             return Flow::Continue;
         }
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return Flow::Quit;
+        }
+        if let Mode::Picking(picker) = &mut self.mode {
+            match key.code {
+                KeyCode::Char('q') => return Flow::Quit,
+                KeyCode::Up | KeyCode::Char('k') => picker.up(),
+                KeyCode::Down | KeyCode::Char('j') => picker.down(),
+                KeyCode::Enter => self.follow_selected(),
+                KeyCode::Esc | KeyCode::Char('f') => self.mode = Mode::Live,
+                _ => {}
+            }
+            return Flow::Continue;
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Flow::Quit,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return Flow::Quit;
-            }
             KeyCode::Char(' ') => self.paused = !self.paused,
             KeyCode::Char('c') => self.clear_stream(),
             KeyCode::Char('f') => self.toggle_follow(),
@@ -146,11 +166,18 @@ impl View {
         frame.render_widget(Paragraph::new(shown.join("\n")).block(block), payload);
         self.draw_stream(frame, stream);
         frame.render_widget(Paragraph::new(self.footer_line()), footer);
+        if let Mode::Picking(picker) = &self.mode {
+            picker.draw(frame, &self.conversations);
+        }
     }
 
     fn footer_line(&self) -> Line<'static> {
         let mut spans = vec![Span::raw(" ")];
-        for (key, label) in KEYS {
+        let keys: &[(&str, &str)] = match self.mode {
+            Mode::Picking(_) => &PICKER_KEYS,
+            _ => &KEYS,
+        };
+        for (key, label) in keys {
             spans.push(Span::styled(format!(" {key} "), theme::KEY));
             spans.push(Span::styled(format!(" {label}  "), theme::HINT));
         }
@@ -183,22 +210,14 @@ impl View {
 
     fn follow_spans(&self) -> Vec<Span<'static>> {
         let followed = self
-            .following
+            .following()
             .and_then(|key| Some((key, self.conversations.get(&key)?)));
         let Some((key, conversation)) = followed else {
-            return vec![Span::styled(
-                "none (f follows the current packet's conversation)",
-                theme::MUTED,
-            )];
-        };
-        let protocol = if key.protocol() == PROTO_TCP {
-            "TCP"
-        } else {
-            "UDP"
+            return vec![Span::styled("none (f picks a conversation)", theme::MUTED)];
         };
         vec![
             Span::styled("following ", theme::FOLLOW),
-            Span::raw(format!("{protocol} ")),
+            Span::raw(format!("{} ", key.protocol_name())),
             Span::styled(conversation.client().to_string(), theme::CLIENT),
             Span::styled(" <> ", theme::MUTED),
             Span::styled(conversation.server().to_string(), theme::SERVER),
@@ -206,7 +225,7 @@ impl View {
     }
 
     fn draw_stream(&self, frame: &mut Frame, area: Rect) {
-        let block = match self.following {
+        let block = match self.following() {
             Some(_) => panel("stream").border_style(theme::FOLLOW),
             None => panel("stream"),
         };
@@ -228,7 +247,10 @@ impl View {
     }
 
     fn shown_stream(&self) -> &Stream {
-        match self.following.and_then(|key| self.conversations.get(&key)) {
+        match self
+            .following()
+            .and_then(|key| self.conversations.get(&key))
+        {
             Some(conversation) => conversation.stream(),
             None => &self.live,
         }
@@ -236,7 +258,7 @@ impl View {
 
     fn clear_stream(&mut self) {
         match self
-            .following
+            .following()
             .and_then(|key| self.conversations.get_mut(&key))
         {
             Some(conversation) => conversation.clear(),
@@ -244,13 +266,33 @@ impl View {
         }
     }
 
-    fn toggle_follow(&mut self) {
-        if self.following.is_some() {
-            self.following = None;
-        } else {
-            self.following = self.latest_key;
+    fn following(&self) -> Option<Key> {
+        match self.mode {
+            Mode::Following(key) => Some(key),
+            _ => None,
         }
-        self.conversations.pin(self.following);
+    }
+
+    fn toggle_follow(&mut self) {
+        if self.following().is_some() {
+            self.mode = Mode::Live;
+            self.conversations.pin(None);
+        } else {
+            self.mode = Mode::Picking(Picker::open(&self.conversations, self.latest_key));
+        }
+    }
+
+    fn follow_selected(&mut self) {
+        let Mode::Picking(picker) = &self.mode else {
+            return;
+        };
+        let Some(key) = picker.selected() else {
+            return;
+        };
+        if self.conversations.get(&key).is_some() {
+            self.mode = Mode::Following(key);
+            self.conversations.pin(Some(key));
+        }
     }
 }
 

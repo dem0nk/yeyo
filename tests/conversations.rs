@@ -232,3 +232,30 @@ fn test_clear_empties_only_stream_ok() -> Result<(), Box<dyn Error>> {
     assert_eq!(conversation.packets(), 1);
     Ok(())
 }
+
+#[test]
+fn test_recent_newest_first_ok() -> Result<(), Box<dyn Error>> {
+    let mut table = Conversations::default();
+    let other = ([10, 0, 0, 9], 4444);
+    record(&mut table, &tcp(CLIENT, SERVER, 0x18, b""), "")?;
+    record(&mut table, &tcp(other, SERVER, 0x18, b""), "")?;
+
+    record(&mut table, &tcp(SERVER, CLIENT, 0x18, b""), "")?;
+
+    assert_eq!(
+        table.recent(),
+        [key_of(6, CLIENT, SERVER), key_of(6, other, SERVER)]
+    );
+    Ok(())
+}
+
+#[test]
+fn test_recent_empty_ok() {
+    assert!(Conversations::default().recent().is_empty());
+}
+
+#[test]
+fn test_key_protocol_name_ok() {
+    assert_eq!(key_of(6, CLIENT, SERVER).protocol_name(), "TCP");
+    assert_eq!(key_of(17, CLIENT, SERVER).protocol_name(), "UDP");
+}

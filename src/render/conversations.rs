@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 const MAX_CONVERSATIONS: usize = 128;
+const PROTO_TCP: u8 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Key {
@@ -29,6 +30,14 @@ impl Key {
 
     pub fn protocol(&self) -> u8 {
         self.protocol
+    }
+
+    pub fn protocol_name(&self) -> &'static str {
+        if self.protocol == PROTO_TCP {
+            "TCP"
+        } else {
+            "UDP"
+        }
     }
 }
 
@@ -116,6 +125,12 @@ impl Conversations {
 
     pub fn get_mut(&mut self, key: &Key) -> Option<&mut Conversation> {
         self.map.get_mut(key)
+    }
+
+    pub fn recent(&self) -> Vec<Key> {
+        let mut entries: Vec<(&Key, &Conversation)> = self.map.iter().collect();
+        entries.sort_by_key(|(_, conversation)| std::cmp::Reverse(conversation.last_active));
+        entries.into_iter().map(|(key, _)| *key).collect()
     }
 
     pub fn pin(&mut self, key: Option<Key>) {

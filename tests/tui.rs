@@ -75,6 +75,11 @@ const CLIENT: ([u8; 4], u16) = ([10, 0, 0, 1], 51000);
 const SERVER: ([u8; 4], u16) = ([10, 0, 0, 2], 80);
 const OTHER: ([u8; 4], u16) = ([10, 0, 0, 9], 4444);
 
+fn follow(view: &mut View) {
+    key(view, KeyCode::Char('f'));
+    key(view, KeyCode::Enter);
+}
+
 fn press(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, modifiers)
 }
@@ -341,7 +346,7 @@ fn test_lock_follows_conversation_both_directions_ok() -> Result<(), Box<dyn Err
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"GET / ")?;
 
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
     send(&mut view, OTHER, SERVER, b"noise ")?;
     send(&mut view, SERVER, CLIENT, b"200 OK ")?;
     send(&mut view, CLIENT, OTHER, b"noise ")?;
@@ -354,7 +359,7 @@ fn test_lock_follows_conversation_both_directions_ok() -> Result<(), Box<dyn Err
 fn test_lock_colours_client_and_server_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"REQUEST")?;
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     send(&mut view, SERVER, CLIENT, b"RESPONSE")?;
     let buffer = drawn(&view)?;
@@ -369,7 +374,7 @@ fn test_lock_shown_in_filter_bar_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"x")?;
 
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
     let text = screen(&view, 80, 20)?;
 
     assert!(text.contains("following TCP 10.0.0.1:51000 <> 10.0.0.2:80"));
@@ -380,7 +385,7 @@ fn test_lock_shown_in_filter_bar_ok() -> Result<(), Box<dyn Error>> {
 fn test_lock_ignores_other_traffic_on_screen_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"x")?;
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     send(&mut view, OTHER, SERVER, b"noise")?;
     udp_packet(&mut view, 1111)?;
@@ -396,7 +401,7 @@ fn test_lock_ignores_other_traffic_on_screen_ok() -> Result<(), Box<dyn Error>> 
 fn test_lock_same_ports_other_protocol_ignored_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"tcp ")?;
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     let udp = common::udp(CLIENT.1, SERVER.1, b"udp");
     let ip = common::ipv4(17, CLIENT.0, SERVER.0, &udp);
@@ -410,7 +415,7 @@ fn test_lock_same_ports_other_protocol_ignored_ok() -> Result<(), Box<dyn Error>
 fn test_lock_ignores_bad_packets_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"x")?;
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
     let err = YeyoError::Truncated {
         layer: Layer::Tcp,
         needed: 20,
@@ -430,37 +435,13 @@ fn test_lock_twice_unlocks_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"a")?;
 
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
     key(&mut view, KeyCode::Char('f'));
     send(&mut view, OTHER, SERVER, b"b")?;
     let text = screen(&view, 80, 20)?;
 
     assert_eq!(view.stream(), "ab");
-    assert!(text.contains("none (f follows"));
-    Ok(())
-}
-
-#[test]
-fn test_lock_without_ports_does_nothing_ok() -> Result<(), Box<dyn Error>> {
-    let mut view = View::default();
-    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
-    view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
-
-    key(&mut view, KeyCode::Char('f'));
-    send(&mut view, OTHER, SERVER, b"still shown")?;
-
-    assert!(screen(&view, 80, 20)?.contains("still shown"));
-    Ok(())
-}
-
-#[test]
-fn test_lock_before_any_packet_does_nothing_ok() -> Result<(), Box<dyn Error>> {
-    let mut view = View::default();
-
-    key(&mut view, KeyCode::Char('f'));
-    send(&mut view, OTHER, SERVER, b"shown")?;
-
-    assert_eq!(view.stream(), "shown");
+    assert!(text.contains("none (f picks"));
     Ok(())
 }
 
@@ -470,7 +451,7 @@ fn test_lock_starts_stream_fresh_ok() -> Result<(), Box<dyn Error>> {
     send(&mut view, OTHER, SERVER, b"old ")?;
     send(&mut view, CLIENT, SERVER, b"new")?;
 
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     assert_eq!(view.stream(), "new");
     Ok(())
@@ -564,7 +545,7 @@ fn test_lock_highlights_stream_border_ok() -> Result<(), Box<dyn Error>> {
     send(&mut view, CLIENT, SERVER, b"x")?;
     let before = drawn(&view)?;
 
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
     let after = drawn(&view)?;
 
     assert_eq!(last_color_of(&before, "╰"), Some(Color::DarkGray));
@@ -579,7 +560,7 @@ fn test_filter_bar_shows_capture_filter_ok() -> Result<(), Box<dyn Error>> {
     let text = screen(&view, 80, 20)?;
 
     assert!(text.contains("capture tcp port 80"));
-    assert!(text.contains("none (f follows"));
+    assert!(text.contains("none (f picks"));
     Ok(())
 }
 
@@ -596,7 +577,7 @@ fn test_filter_bar_keeps_capture_filter_while_following_ok() -> Result<(), Box<d
     let mut view = View::new(Some("tcp"));
     send(&mut view, CLIENT, SERVER, b"x")?;
 
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
     let text = screen(&view, 100, 20)?;
 
     assert!(text.contains("capture tcp"));
@@ -631,7 +612,7 @@ fn test_follow_shows_history_before_f_ok() -> Result<(), Box<dyn Error>> {
     send(&mut view, OTHER, SERVER, b"noise ")?;
     send(&mut view, SERVER, CLIENT, b"200 ")?;
 
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     assert_eq!(view.stream(), "GET 200 ");
     Ok(())
@@ -656,7 +637,7 @@ fn test_clear_while_following_clears_only_that_conversation_ok() -> Result<(), B
     send(&mut view, CLIENT, SERVER, b"a")?;
     send(&mut view, OTHER, SERVER, b"b")?;
     send(&mut view, CLIENT, SERVER, b"c")?;
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     key(&mut view, KeyCode::Char('c'));
     let followed = view.stream();
@@ -674,7 +655,7 @@ fn test_clear_live_keeps_conversation_history_ok() -> Result<(), Box<dyn Error>>
 
     key(&mut view, KeyCode::Char('c'));
     let live = view.stream();
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     assert_eq!(live, "");
     assert_eq!(view.stream(), "a");
@@ -685,7 +666,7 @@ fn test_clear_live_keeps_conversation_history_ok() -> Result<(), Box<dyn Error>>
 fn test_follow_survives_conversation_flood_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"x")?;
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     for port in 1..=300 {
         send(&mut view, (OTHER.0, port), SERVER, b"scan")?;
@@ -706,8 +687,269 @@ fn test_paused_records_nothing_ok() -> Result<(), Box<dyn Error>> {
     key(&mut view, KeyCode::Char(' '));
     send(&mut view, CLIENT, SERVER, b"b")?;
     key(&mut view, KeyCode::Char(' '));
-    key(&mut view, KeyCode::Char('f'));
+    follow(&mut view);
 
     assert_eq!(view.stream(), "a");
+    Ok(())
+}
+
+fn text_of(view: &View) -> Result<String, Box<dyn Error>> {
+    screen(view, 100, 30)
+}
+
+#[test]
+fn test_picker_empty_shows_message_and_stays_open_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+    view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
+
+    follow(&mut view);
+    let text = text_of(&view)?;
+
+    assert!(text.contains("no conversations yet"));
+    assert!(text.contains("esc  close"));
+    Ok(())
+}
+
+#[test]
+fn test_picker_lists_newest_first_with_counts_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"a")?;
+    send(&mut view, OTHER, SERVER, b"b")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    let text = text_of(&view)?;
+
+    let other = text
+        .find("TCP 10.0.0.9:4444 <> 10.0.0.2:80")
+        .ok_or("other row missing")?;
+    let client = text
+        .find("TCP 10.0.0.1:51000 <> 10.0.0.2:80")
+        .ok_or("client row missing")?;
+    assert!(other < client);
+    assert!(text.contains("1 pkts  64 B"));
+    Ok(())
+}
+
+#[test]
+fn test_picker_preselects_conversation_on_screen_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, OTHER, SERVER, b"other ")?;
+    send(&mut view, CLIENT, SERVER, b"mine ")?;
+    send(&mut view, OTHER, SERVER, b"other ")?;
+    send(&mut view, CLIENT, SERVER, b"mine ")?;
+
+    follow(&mut view);
+
+    assert_eq!(view.stream(), "mine mine ");
+    Ok(())
+}
+
+#[test]
+fn test_picker_starts_at_top_without_ports_on_screen_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"old ")?;
+    send(&mut view, OTHER, SERVER, b"new ")?;
+    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+    view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
+
+    follow(&mut view);
+
+    assert_eq!(view.stream(), "new ");
+    Ok(())
+}
+
+#[test]
+fn test_picker_moves_and_follows_selected_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"client ")?;
+    send(&mut view, OTHER, SERVER, b"other ")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    key(&mut view, KeyCode::Down);
+    key(&mut view, KeyCode::Enter);
+    let text = text_of(&view)?;
+
+    assert_eq!(view.stream(), "client ");
+    assert!(text.contains("following TCP 10.0.0.1:51000 <> 10.0.0.2:80"));
+    Ok(())
+}
+
+#[test]
+fn test_picker_j_k_move_like_arrows_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"client ")?;
+    send(&mut view, OTHER, SERVER, b"other ")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    key(&mut view, KeyCode::Char('j'));
+    key(&mut view, KeyCode::Char('k'));
+    key(&mut view, KeyCode::Enter);
+
+    assert_eq!(view.stream(), "other ");
+    Ok(())
+}
+
+#[test]
+fn test_picker_stops_at_both_ends_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"client ")?;
+    send(&mut view, OTHER, SERVER, b"other ")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    key(&mut view, KeyCode::Up);
+    key(&mut view, KeyCode::Up);
+    key(&mut view, KeyCode::Enter);
+    let top = view.stream();
+    key(&mut view, KeyCode::Char('f'));
+    key(&mut view, KeyCode::Char('f'));
+    for _ in 0..5 {
+        key(&mut view, KeyCode::Down);
+    }
+    key(&mut view, KeyCode::Enter);
+
+    assert_eq!(top, "other ");
+    assert_eq!(view.stream(), "client ");
+    Ok(())
+}
+
+#[test]
+fn test_picker_esc_closes_without_quitting_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+    key(&mut view, KeyCode::Char('f'));
+
+    let flow = key(&mut view, KeyCode::Esc);
+    let text = text_of(&view)?;
+
+    assert_eq!(flow, Flow::Continue);
+    assert!(!text.contains(" conversations "));
+    assert!(text.contains("none (f picks"));
+    Ok(())
+}
+
+#[test]
+fn test_picker_f_closes_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    key(&mut view, KeyCode::Char('f'));
+
+    assert!(!text_of(&view)?.contains(" conversations "));
+    Ok(())
+}
+
+#[test]
+fn test_picker_q_and_ctrl_c_still_quit_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    let q = key(&mut view, KeyCode::Char('q'));
+    let ctrl_c = view.key(press(KeyCode::Char('c'), KeyModifiers::CONTROL));
+
+    assert_eq!(q, Flow::Quit);
+    assert_eq!(ctrl_c, Flow::Quit);
+    Ok(())
+}
+
+#[test]
+fn test_picker_snapshot_stable_while_packets_arrive_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"client ")?;
+    send(&mut view, OTHER, SERVER, b"other ")?;
+    key(&mut view, KeyCode::Char('f'));
+    key(&mut view, KeyCode::Down);
+
+    send(&mut view, CLIENT, SERVER, b"more ")?;
+    send(&mut view, ([10, 0, 0, 7], 7777), SERVER, b"new ")?;
+    key(&mut view, KeyCode::Enter);
+
+    assert_eq!(view.stream(), "client more ");
+    Ok(())
+}
+
+#[test]
+fn test_picker_evicted_row_cannot_be_followed_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+    key(&mut view, KeyCode::Char('f'));
+
+    for port in 1..=200 {
+        send(&mut view, (OTHER.0, port), SERVER, b"scan")?;
+    }
+    key(&mut view, KeyCode::Enter);
+    let text = text_of(&view)?;
+
+    assert!(text.contains("(gone)"));
+    assert!(text.contains(" conversations "));
+    assert!(!text.contains("following"));
+    Ok(())
+}
+
+#[test]
+fn test_picker_rows_coloured_and_selected_highlighted_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+
+    key(&mut view, KeyCode::Char('f'));
+    let buffer = drawn(&view)?;
+
+    assert_eq!(
+        last_color_of(&buffer, "10.0.0.1:51000"),
+        Some(Color::LightRed)
+    );
+    assert_eq!(
+        last_color_of(&buffer, "10.0.0.2:80"),
+        Some(Color::LightBlue)
+    );
+    let marker = buffer
+        .content
+        .iter()
+        .find(|cell| cell.symbol() == "▶")
+        .ok_or("no selection marker")?;
+    assert_eq!(marker.bg, Color::DarkGray);
+    Ok(())
+}
+
+#[test]
+fn test_picker_many_rows_keeps_selection_visible_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    for port in 1..=100 {
+        send(&mut view, (OTHER.0, port), SERVER, b"x")?;
+    }
+
+    key(&mut view, KeyCode::Char('f'));
+    for _ in 0..99 {
+        key(&mut view, KeyCode::Down);
+    }
+    let text = text_of(&view)?;
+
+    assert!(text.contains("▶ TCP 10.0.0.9:1 <> 10.0.0.2:80"));
+    Ok(())
+}
+
+#[test]
+fn test_picker_tiny_terminal_no_panic_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"x")?;
+    key(&mut view, KeyCode::Char('f'));
+
+    for (width, height) in [(1, 1), (10, 5), (3, 40), (200, 2)] {
+        screen(&view, width, height)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn test_picker_footer_shows_picker_keys_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    key(&mut view, KeyCode::Char('f'));
+    let text = text_of(&view)?;
+
+    assert!(text.contains("enter  follow"));
+    assert!(!text.contains("space  pause"));
     Ok(())
 }
