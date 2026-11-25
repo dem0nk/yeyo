@@ -24,8 +24,8 @@ pub(super) const SELECTED: Style = Style::new()
     .bg(Color::Cyan)
     .add_modifier(Modifier::BOLD);
 
-pub(super) const CLIENT: Style = Style::new().fg(Color::LightRed);
-pub(super) const SERVER: Style = Style::new().fg(Color::LightBlue);
+pub(super) const CLIENT: Style = Style::new().fg(Color::Indexed(180));
+pub(super) const SERVER: Style = Style::new().fg(Color::Indexed(110));
 pub(super) const FOLLOW: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
 
 pub(super) const CAPTURING: Style = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);

@@ -364,8 +364,11 @@ fn test_lock_colours_client_and_server_ok() -> Result<(), Box<dyn Error>> {
     send(&mut view, SERVER, CLIENT, b"RESPONSE")?;
     let buffer = drawn(&view)?;
 
-    assert_eq!(last_color_of(&buffer, "REQUEST"), Some(Color::LightRed));
-    assert_eq!(last_color_of(&buffer, "RESPONSE"), Some(Color::LightBlue));
+    assert_eq!(last_color_of(&buffer, "REQUEST"), Some(Color::Indexed(180)));
+    assert_eq!(
+        last_color_of(&buffer, "RESPONSE"),
+        Some(Color::Indexed(110))
+    );
     Ok(())
 }
 
@@ -626,8 +629,11 @@ fn test_live_stream_coloured_by_side_ok() -> Result<(), Box<dyn Error>> {
     send(&mut view, SERVER, CLIENT, b"RESPONSE")?;
     let buffer = drawn(&view)?;
 
-    assert_eq!(last_color_of(&buffer, "REQUEST"), Some(Color::LightRed));
-    assert_eq!(last_color_of(&buffer, "RESPONSE"), Some(Color::LightBlue));
+    assert_eq!(last_color_of(&buffer, "REQUEST"), Some(Color::Indexed(180)));
+    assert_eq!(
+        last_color_of(&buffer, "RESPONSE"),
+        Some(Color::Indexed(110))
+    );
     Ok(())
 }
 
@@ -899,7 +905,7 @@ fn test_picker_rows_coloured_and_selected_highlighted_ok() -> Result<(), Box<dyn
 
     assert_eq!(
         last_color_of(&buffer, "10.0.0.1:51000"),
-        Some(Color::LightRed)
+        Some(Color::Indexed(180))
     );
     let marker = buffer
         .content
@@ -985,8 +991,8 @@ fn test_server_follow_includes_new_connections_ok() -> Result<(), Box<dyn Error>
     let buffer = drawn(&view)?;
 
     assert_eq!(view.stream(), "GET1 GET2 OK2 ");
-    assert_eq!(last_color_of(&buffer, "GET2"), Some(Color::LightRed));
-    assert_eq!(last_color_of(&buffer, "OK2"), Some(Color::LightBlue));
+    assert_eq!(last_color_of(&buffer, "GET2"), Some(Color::Indexed(180)));
+    assert_eq!(last_color_of(&buffer, "OK2"), Some(Color::Indexed(110)));
     Ok(())
 }
 
