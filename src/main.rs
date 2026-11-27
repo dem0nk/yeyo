@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use yeyo::capture::{self, Capture, MAX_SNAPLEN, Options};
 use yeyo::error::YeyoError;
+use yeyo::filter::Filter;
 use yeyo::packet::link::LinkType;
 use yeyo::render;
 
@@ -23,6 +24,9 @@ struct Args {
     /// Capture filter in BPF syntax (e.g. "tcp port 80")
     #[arg(short = 'f', long = "capture-filter")]
     capture_filter: Option<String>,
+    /// Display filter applied after parsing (e.g. "http.request.method == POST")
+    #[arg(short = 'Y', long = "display-filter")]
+    display_filter: Option<String>,
     /// Keep only the first N bytes of each packet
     #[arg(
         short = 's',
@@ -48,7 +52,7 @@ struct Args {
         short = 'D',
         long,
         conflicts_with_all = [
-            "interface", "read", "write", "capture_filter",
+            "interface", "read", "write", "capture_filter", "display_filter",
             "snaplen", "no_promisc", "buffer_size",
         ]
     )]
@@ -73,6 +77,12 @@ fn run(args: &Args) -> Result<(), YeyoError> {
         }
         return Ok(());
     }
+
+    let display_filter = args
+        .display_filter
+        .as_deref()
+        .map(Filter::parse)
+        .transpose()?;
 
     let options = Options {
         snaplen: args.snaplen.unwrap_or(MAX_SNAPLEN),
@@ -100,9 +110,14 @@ fn run(args: &Args) -> Result<(), YeyoError> {
 
     let feed = cap.spawn();
     let shown = if io::stdout().is_terminal() {
-        render::show_tui(&feed, link_type, args.capture_filter.as_deref())
+        render::show_tui(
+            &feed,
+            link_type,
+            args.capture_filter.as_deref(),
+            display_filter.as_ref(),
+        )
     } else {
-        render::print_lines(&feed, link_type)
+        render::print_lines(&feed, link_type, display_filter.as_ref())
     };
     let stats = feed.finish()?;
     shown?;

@@ -1,6 +1,7 @@
 use super::summary::summary;
 use crate::capture::Feed;
 use crate::error::YeyoError;
+use crate::filter::Filter;
 use crate::packet::Packet;
 use crate::packet::link::LinkType;
 use std::io::{self, ErrorKind, Write};
@@ -44,12 +45,18 @@ impl<W: Write> Lines<W> {
     }
 }
 
-pub fn print_lines(feed: &Feed, link_type: LinkType) -> Result<(), YeyoError> {
+pub fn print_lines(
+    feed: &Feed,
+    link_type: LinkType,
+    filter: Option<&Filter>,
+) -> Result<(), YeyoError> {
     let mut lines = Lines::new(io::stdout().lock());
     while let Some(frame) = feed.recv() {
-        let written = match Packet::parse(link_type, &frame.data) {
-            Ok(packet) => lines.packet(frame.time, frame.len, &packet),
-            Err(e) => lines.bad(frame.time, frame.len, &e),
+        let written = match (Packet::parse(link_type, &frame.data), filter) {
+            (Ok(packet), Some(filter)) if !filter.matches(&packet) => continue,
+            (Ok(packet), _) => lines.packet(frame.time, frame.len, &packet),
+            (Err(_), Some(_)) => continue,
+            (Err(e), None) => lines.bad(frame.time, frame.len, &e),
         };
         match written {
             Ok(()) => {}

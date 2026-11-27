@@ -127,3 +127,29 @@ fn test_display_output_ok() {
     let err = YeyoError::Output(String::from("disk full"));
     assert_eq!(err.to_string(), "cannot write output: disk full");
 }
+
+#[test]
+fn test_display_display_filter_ok() {
+    let err = YeyoError::DisplayFilter {
+        expr: String::from("tcp.port =="),
+        column: 12,
+        reason: String::from("expected a value"),
+    };
+    assert_eq!(
+        err.to_string(),
+        "invalid display filter 'tcp.port ==': column 12: expected a value"
+    );
+}
+
+#[test]
+fn test_display_display_filter_hides_control_chars_ok() {
+    let err = YeyoError::DisplayFilter {
+        expr: String::from("tcp\u{1b}[2J"),
+        column: 4,
+        reason: String::from("unexpected character"),
+    };
+    assert_eq!(
+        err.to_string(),
+        "invalid display filter 'tcp.[2J': column 4: unexpected character"
+    );
+}

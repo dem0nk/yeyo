@@ -61,6 +61,11 @@ pub enum YeyoError {
         reason: String,
     },
     Output(String),
+    DisplayFilter {
+        expr: String,
+        column: usize,
+        reason: String,
+    },
 }
 
 impl fmt::Display for YeyoError {
@@ -101,6 +106,20 @@ impl fmt::Display for YeyoError {
                  hint: capturing needs extra privileges; try running with sudo"
             ),
             YeyoError::Output(reason) => write!(f, "cannot write output: {reason}"),
+            YeyoError::DisplayFilter {
+                expr,
+                column,
+                reason,
+            } => {
+                let expr: String = expr
+                    .chars()
+                    .map(|c| if c.is_control() { '.' } else { c })
+                    .collect();
+                write!(
+                    f,
+                    "invalid display filter '{expr}': column {column}: {reason}"
+                )
+            }
         }
     }
 }

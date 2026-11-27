@@ -108,3 +108,75 @@ fn test_closed_pipe_stops_quietly_ok() -> Result<(), Box<dyn Error>> {
     assert!(stderr.contains("packets captured"), "stderr: {stderr}");
     Ok(())
 }
+
+fn http_capture(name: &str) -> std::io::Result<std::path::PathBuf> {
+    let get = common::ipv4(
+        6,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::tcp(51000, 80, 0x18, b"GET / HTTP/1.1\r\nHost: a.com\r\n\r\n"),
+    );
+    let post = common::ipv4(
+        6,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::tcp(51001, 80, 0x18, b"POST /login HTTP/1.1\r\n\r\nuser=bob"),
+    );
+    let dns = common::ipv4(
+        17,
+        [10, 0, 0, 1],
+        [10, 0, 0, 3],
+        &common::udp(40000, 53, &[]),
+    );
+    let mut bytes = common::pcap_header(101);
+    for packet in [&get, &post, &dns, &vec![0x45]] {
+        bytes.extend(common::pcap_record(packet, packet.len() as u32));
+    }
+    common::temp_file(name, &bytes)
+}
+
+fn stdout_lines(out: &Output) -> Vec<String> {
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn test_display_filter_syntax_error_exits_err() -> Result<(), Box<dyn Error>> {
+    let out = yeyo(&["-r", "yeyo-missing.pcap", "-Y", "tcp.port =="])?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("invalid display filter 'tcp.port ==': column 12: expected a value"),
+        "stderr: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_display_filter_conflicts_with_list_err() -> Result<(), Box<dyn Error>> {
+    rejected(&["-D", "-Y", "tcp"], "cannot be used with")
+}
+
+#[test]
+fn test_display_filter_keeps_matching_lines_ok() -> Result<(), Box<dyn Error>> {
+    let path = http_capture("cli-display-filter")?;
+    let path_text = path.to_str().ok_or("temp path not UTF-8")?;
+
+    let out = yeyo(&["-r", path_text, "-Y", "http.request.method == POST"])?;
+    let long = yeyo(&["-r", path_text, "--display-filter", "tcp.dstport == 80"])?;
+    let unfiltered = yeyo(&["-r", path_text])?;
+    std::fs::remove_file(&path)?;
+
+    let lines = stdout_lines(&out);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(lines.len(), 1, "lines: {lines:?}");
+    assert!(lines[0].contains(":51001 > "), "lines: {lines:?}");
+    assert_eq!(stdout_lines(&long).len(), 2);
+    let all = stdout_lines(&unfiltered);
+    assert_eq!(all.len(), 4, "lines: {all:?}");
+    assert!(all[3].contains("bad packet"), "lines: {all:?}");
+    Ok(())
+}

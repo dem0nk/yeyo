@@ -6,6 +6,7 @@ use super::text::{printable, wrap, wrap_tagged};
 use super::theme::{self, panel};
 use crate::capture::Feed;
 use crate::error::YeyoError;
+use crate::filter::Filter;
 use crate::packet::link::LinkType;
 use crate::packet::{Packet, Transport};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -386,6 +387,7 @@ pub fn show_tui(
     feed: &Feed,
     link_type: LinkType,
     capture_filter: Option<&str>,
+    display_filter: Option<&Filter>,
 ) -> Result<(), YeyoError> {
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -394,7 +396,8 @@ pub fn show_tui(
             return Err(output(e));
         }
     };
-    let shown = run(&mut terminal, feed, link_type, View::new(capture_filter));
+    let view = View::new(capture_filter);
+    let shown = run(&mut terminal, feed, link_type, display_filter, view);
     let restored = ratatui::try_restore().map_err(output);
     shown?;
     restored
@@ -404,10 +407,11 @@ fn run(
     terminal: &mut DefaultTerminal,
     feed: &Feed,
     link_type: LinkType,
+    filter: Option<&Filter>,
     mut view: View,
 ) -> Result<(), YeyoError> {
     loop {
-        drain(feed, link_type, &mut view);
+        drain(feed, link_type, filter, &mut view);
         terminal.draw(|frame| view.draw(frame)).map_err(output)?;
         if event::poll(TICK).map_err(output)?
             && let Event::Key(key) = event::read().map_err(output)?
@@ -418,12 +422,14 @@ fn run(
     }
 }
 
-fn drain(feed: &Feed, link_type: LinkType, view: &mut View) {
+fn drain(feed: &Feed, link_type: LinkType, filter: Option<&Filter>, view: &mut View) {
     for _ in 0..MAX_FRAMES_PER_TICK {
         match feed.try_recv() {
-            Ok(frame) => match Packet::parse(link_type, &frame.data) {
-                Ok(packet) => view.packet(frame.len, &packet),
-                Err(e) => view.bad(frame.len, &e),
+            Ok(frame) => match (Packet::parse(link_type, &frame.data), filter) {
+                (Ok(packet), Some(filter)) if !filter.matches(&packet) => {}
+                (Ok(packet), _) => view.packet(frame.len, &packet),
+                (Err(_), Some(_)) => {}
+                (Err(e), None) => view.bad(frame.len, &e),
             },
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
