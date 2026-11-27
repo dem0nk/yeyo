@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use pcap::Device;
 use std::error::Error;

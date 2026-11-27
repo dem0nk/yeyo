@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::error::Error;
 use yeyo::capture::{Capture, KernelStats, Stats};
