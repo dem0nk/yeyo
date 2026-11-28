@@ -124,6 +124,7 @@ impl Net {
         match (self.addr, ip) {
             (IpAddr::V4(net), IpAddr::V4(ip)) => {
                 let mask = u32::MAX
+                    // Shifting by the full width overflows; a /0 prefix matches everything.
                     .checked_shl(32 - u32::from(self.prefix))
                     .unwrap_or(0);
                 u32::from(net) & mask == u32::from(ip) & mask

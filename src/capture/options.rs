@@ -1,3 +1,4 @@
+// Same ceiling as tcpdump and Wireshark.
 pub const MAX_SNAPLEN: u32 = 262_144;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

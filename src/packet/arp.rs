@@ -36,6 +36,7 @@ impl Arp {
         let hardware = u16::from_be_bytes([bytes[0], bytes[1]]);
         let protocol = u16::from_be_bytes([bytes[2], bytes[3]]);
         let (mac_len, ip_len) = (bytes[4], bytes[5]);
+        // The fixed 28-byte layout only holds for Ethernet/IPv4 ARP.
         if hardware != HARDWARE_ETHERNET
             || protocol != PROTOCOL_IPV4
             || mac_len != MAC_LEN

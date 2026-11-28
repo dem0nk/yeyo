@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+// Keeps memory and redraw time bounded on long captures.
 const STREAM_LIMIT: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +69,7 @@ impl Stream {
                 self.chunks.pop_front();
             } else {
                 let mut cut = excess;
+                // Never cut inside a multi-byte character.
                 while !front.text.is_char_boundary(cut) {
                     cut += 1;
                 }

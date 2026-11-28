@@ -40,6 +40,7 @@ impl<W: Write> Lines<W> {
         let start = *self.start.get_or_insert(time);
         match time.duration_since(start) {
             Ok(ahead) => seconds(ahead),
+            // Savefiles can hold out-of-order timestamps.
             Err(behind) => format!("-{}", seconds(behind.duration())),
         }
     }
@@ -55,11 +56,13 @@ pub fn print_lines(
         let written = match (Packet::parse(link_type, &frame.data), filter) {
             (Ok(packet), Some(filter)) if !filter.matches(&packet) => continue,
             (Ok(packet), _) => lines.packet(frame.time, frame.len, &packet),
+            // A packet that couldn't be parsed can't match a filter.
             (Err(_), Some(_)) => continue,
             (Err(e), None) => lines.bad(frame.time, frame.len, &e),
         };
         match written {
             Ok(()) => {}
+            // The reader went away (`yeyo | head`); stop quietly.
             Err(e) if e.kind() == ErrorKind::BrokenPipe => break,
             Err(e) => return Err(YeyoError::Output(e.to_string())),
         }

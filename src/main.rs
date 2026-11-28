@@ -81,6 +81,7 @@ fn run(args: &Args) -> Result<(), YeyoError> {
     let display_filter = args
         .display_filter
         .as_deref()
+        // Parse before opening the capture so a typo fails fast, without needing privileges.
         .map(Filter::parse)
         .transpose()?;
 
@@ -119,6 +120,7 @@ fn run(args: &Args) -> Result<(), YeyoError> {
     } else {
         render::print_lines(&feed, link_type, display_filter.as_ref())
     };
+    // Stop the capture before reporting a render error so the savefile is flushed.
     let stats = feed.finish()?;
     shown?;
     eprintln!("{stats}");

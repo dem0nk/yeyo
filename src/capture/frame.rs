@@ -21,6 +21,7 @@ impl Frame {
 
 fn timestamp(sec: impl TryInto<u64>, usec: impl TryInto<u64>) -> Option<SystemTime> {
     let sec = sec.try_into().ok()?;
+    // Corrupt savefiles can hold negative or out-of-range times; show them as unknown.
     let usec = usec.try_into().ok().filter(|&us| us < MICROS_PER_SEC)?;
     UNIX_EPOCH.checked_add(Duration::from_secs(sec) + Duration::from_micros(usec))
 }

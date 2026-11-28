@@ -22,6 +22,7 @@ use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 const TICK: Duration = Duration::from_millis(100);
+// Caps work between redraws so a flood can't freeze the screen or key handling.
 const MAX_FRAMES_PER_TICK: usize = 10_000;
 const KEYS: [(&str, &str); 5] = [
     ("q", "quit"),
@@ -68,6 +69,7 @@ pub struct View {
     conversations: Conversations,
     mode: Mode,
     scroll_top: Option<usize>,
+    // Set while drawing, which only borrows the view, and read by the scroll keys.
     page: Cell<usize>,
     max_top: Cell<usize>,
     packets: u64,
@@ -96,6 +98,7 @@ impl View {
         let payload = printable(packet.payload);
         let recorded = self.conversations.record(packet, len, &payload);
         let key = recorded.map(|(key, _)| key);
+        // Only TCP/UDP belong in the stream; ping or ARP bytes would bury the conversation text.
         if let Some((_, side)) = recorded {
             self.live.push(Some(side), payload.clone());
         }
@@ -145,6 +148,7 @@ impl View {
     }
 
     pub fn key(&mut self, key: KeyEvent) -> Flow {
+        // Some terminals also report key releases and repeats.
         if key.kind != KeyEventKind::Press {
             return Flow::Continue;
         }
@@ -319,6 +323,7 @@ impl View {
         let max_top = rows.len().saturating_sub(height);
         self.page.set(height.max(1));
         self.max_top.set(max_top);
+        // No scroll position means live: pin the newest rows to the bottom.
         let start = self.scroll_top.map_or(max_top, |top| top.min(max_top));
         let lines: Vec<Line> = rows
             .into_iter()
@@ -380,6 +385,7 @@ impl View {
             return;
         };
         let target = target(key, conversation);
+        // Copy the history now so eviction from the table can't change what is followed.
         let mut stream = Stream::default();
         for conversation in self.conversations.matching(&target) {
             for (side, text) in conversation.stream().parts() {
@@ -405,6 +411,7 @@ fn marked<'a>(parts: &[(Option<Side>, &'a str)]) -> Vec<(Tag, &'a str)> {
     let mut out = Vec::new();
     let mut previous: Option<(Option<Side>, &str)> = None;
     for &(side, text) in parts {
+        // Start the other side's text on a fresh row, without changing the stored stream.
         if let Some((last_side, last_text)) = previous
             && last_side != side
             && !last_text.ends_with('\n')
@@ -437,6 +444,7 @@ fn mark_style(side: Option<Side>, mark: Mark) -> Style {
     }
 }
 
+// Filter text is user input; sanitize it like payloads and keep it to one row.
 fn one_line(expr: &str) -> String {
     printable(expr.as_bytes()).replace('\n', " ")
 }
@@ -456,6 +464,7 @@ pub fn show_tui(
     };
     let view = View::new(capture_filter).with_display_filter(display_filter.map(Filter::text));
     let shown = run(&mut terminal, feed, link_type, display_filter, view);
+    // Restore the terminal even when the loop failed, then report the first error.
     let restored = ratatui::try_restore().map_err(output);
     shown?;
     restored

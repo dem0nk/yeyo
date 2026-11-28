@@ -115,6 +115,7 @@ impl fmt::Display for YeyoError {
             } => {
                 let expr: String = expr
                     .chars()
+                    // Keep control characters in the expression off the terminal.
                     .map(|c| if c.is_control() { '.' } else { c })
                     .collect();
                 write!(

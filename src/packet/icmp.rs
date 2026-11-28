@@ -1,6 +1,7 @@
 use crate::error::{Layer, YeyoError};
 
 pub const V4_MIN_LEN: usize = 8;
+// ICMPv6 only guarantees type, code and checksum; ICMPv4 always has a 4-byte rest-of-header.
 pub const V6_MIN_LEN: usize = 4;
 const ECHO_LEN: usize = 8;
 

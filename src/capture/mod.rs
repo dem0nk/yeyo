@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+// Wakes the read loop often enough to notice a stop request on a quiet interface.
 const READ_TIMEOUT_MS: i32 = 100;
 
 pub struct Capture {
@@ -80,6 +81,7 @@ impl Capture {
 
     pub fn save_to(&mut self, path: &Path) -> Result<(), YeyoError> {
         if let Some(source) = &self.source
+            // Opening the savefile truncates it, which would destroy the input being read.
             && same_file::is_same_file(source, path).unwrap_or(false)
         {
             return Err(YeyoError::SameFile(path.to_path_buf()));
@@ -109,6 +111,7 @@ impl Capture {
                     self.captured += 1;
                     return Ok(Some(Frame::from_packet(&packet)));
                 }
+                // No packet within the timeout; loop to check the stop flag.
                 Err(pcap::Error::TimeoutExpired) => continue,
                 Err(pcap::Error::NoMorePackets) => return Ok(None),
                 Err(e) => return Err(e.into()),
@@ -118,6 +121,7 @@ impl Capture {
 
     pub fn stats(&mut self) -> Result<Stats, YeyoError> {
         let kernel = match self.source {
+            // Kernel counters only exist for live captures.
             Some(_) => None,
             None => Some(KernelStats::from_pcap(self.handle.stats()?)),
         };

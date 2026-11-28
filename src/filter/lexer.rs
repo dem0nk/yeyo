@@ -20,6 +20,7 @@ pub(super) struct Token {
 
 pub(super) type Error = (usize, String);
 
+// Caps parser work on hostile input; real filters are far shorter.
 pub(super) const MAX_LEN: usize = 1024;
 
 pub(super) fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
@@ -34,6 +35,7 @@ pub(super) fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
     let mut tokens = Vec::new();
     let mut i = 0;
     while i < chars.len() {
+        // Columns count characters from 1, so they line up with what the user typed.
         let column = i + 1;
         let next = chars.get(i + 1).copied();
         let (kind, width) = match chars[i] {

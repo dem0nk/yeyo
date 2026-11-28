@@ -1,6 +1,7 @@
 pub const METHODS: [&str; 9] = [
     "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",
 ];
+// Bounds the work a hostile payload can cause.
 const MAX_HEADERS: usize = 64;
 const VERSION_PREFIX: &str = "HTTP/1.";
 const STATUS_DIGITS: usize = 3;
@@ -57,6 +58,7 @@ impl<'a> Http<'a> {
                 body = rest;
                 break;
             }
+            // Binary data in the header block means this isn't HTTP text.
             let line = std::str::from_utf8(line).ok()?;
             if headers.len() < MAX_HEADERS
                 && let Some(header) = header(line)
@@ -126,6 +128,8 @@ impl<'a> Http<'a> {
     }
 }
 
+// A line without a trailing newline was cut off by the segment boundary, so it is
+// not returned. Bare LF is accepted, as most servers do.
 fn next_line(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
     let end = bytes.iter().position(|&byte| byte == b'\n')?;
     let line = &bytes[..end];

@@ -16,6 +16,7 @@ struct Context<'p, 'a> {
 
 impl Filter {
     pub fn matches(&self, packet: &Packet<'_>) -> bool {
+        // Dissecting is the costly part, so it only runs when the filter asks for HTTP.
         let http = if self.uses_http {
             dissect(packet.payload).map(|App::Http(http)| http)
         } else {
@@ -108,10 +109,12 @@ fn values<'a>(field: Field, context: &Context<'_, 'a>) -> Vec<Got<'a>> {
 }
 
 fn compare(field: Field, op: Op, want: &Value, got: &[Got]) -> bool {
+    // A field the packet doesn't have never matches, for '!=' too (as in Wireshark).
     if got.is_empty() {
         return false;
     }
     match op {
+        // Two-sided fields like ip.addr: '!=' means neither side equals the value.
         Op::Ne => got.iter().all(|got| !test(field, Op::Eq, want, got)),
         _ => got.iter().any(|got| test(field, op, want, got)),
     }
@@ -127,6 +130,7 @@ fn test(field: Field, op: Op, want: &Value, got: &Got) -> bool {
             Op::Ge => got >= want,
             Op::Le => got <= want,
         },
+        // Host names are case-insensitive; methods are not.
         (Value::Text(want), Got::Text(got)) if field == Field::HttpHost => {
             got.eq_ignore_ascii_case(want)
         }

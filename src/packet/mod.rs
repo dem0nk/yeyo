@@ -95,6 +95,8 @@ impl<'a> Packet<'a> {
                         got: bytes.len(),
                     });
                 }
+                // The loopback family field is in host byte order and its values differ per OS,
+                // so the IP version nibble is the reliable signal.
                 let network = ip_by_version(&bytes[LOOPBACK_HEADER_LEN..]);
                 (Link::Loopback, network, LOOPBACK_HEADER_LEN)
             }
@@ -125,9 +127,11 @@ impl<'a> Packet<'a> {
             }
         };
 
+        // Trim to the declared IP length so Ethernet padding never reaches the payload.
         let datagram = &after_link[..ip.datagram_len(after_link.len())];
         let ip_payload = &datagram[ip.header_len()..];
 
+        // Only the first fragment carries the transport header.
         if ip.is_later_fragment() {
             return Ok(Packet {
                 link,
@@ -145,6 +149,7 @@ impl<'a> Packet<'a> {
             }
             PROTO_UDP => {
                 let udp = UdpHeader::parse(ip_payload)?;
+                // Bytes past the UDP length are not UDP data; a snaplen cut can also end it early.
                 let end = usize::from(udp.length).min(ip_payload.len());
                 let payload = &ip_payload[udp::HEADER_LEN..end];
                 (Some(Transport::Udp(udp)), payload)
@@ -240,6 +245,7 @@ impl IpHeader {
     fn datagram_len(&self, captured: usize) -> usize {
         let declared = match self {
             IpHeader::V4(h) => usize::from(h.total_length),
+            // Zero means a jumbogram (RFC 2675) or an offloaded capture; trust what was captured.
             IpHeader::V6(h) if h.payload_length == 0 => captured,
             IpHeader::V6(h) => ipv6::HEADER_LEN + usize::from(h.payload_length),
         };
@@ -247,6 +253,7 @@ impl IpHeader {
     }
 }
 
+// Anything that isn't version 6 goes to the IPv4 parser, which reports the bad version.
 fn ip_by_version(bytes: &[u8]) -> Next {
     if !bytes.is_empty() && bytes[0] >> 4 == IP_VERSION_6 {
         Next::Ipv6

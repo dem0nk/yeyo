@@ -25,6 +25,7 @@ pub(super) const SELECTED: Style = Style::new()
     .bg(Color::Cyan)
     .add_modifier(Modifier::BOLD);
 
+// Muted 256-colour tones, easy on the eyes over long reads.
 pub(super) const CLIENT: Style = Style::new().fg(Color::Indexed(180));
 pub(super) const SERVER: Style = Style::new().fg(Color::Indexed(110));
 pub(super) const KEYWORD: Modifier = Modifier::BOLD;

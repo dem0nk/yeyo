@@ -4,6 +4,7 @@ const HEADER_LEN: usize = 14;
 const TAG_LEN: usize = 4;
 const TPID_8021Q: u16 = 0x8100;
 const TPID_8021AD: u16 = 0x88a8;
+// Pre-802.1ad Q-in-Q tag, still sent by some switches.
 const TPID_QINQ_LEGACY: u16 = 0x9100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,7 @@ impl EthernetHeader {
         let mut offset = HEADER_LEN;
         let mut vlans = Vec::new();
 
+        // Tags can be stacked (Q-in-Q); each one hides the real ethertype behind it.
         while matches!(ethertype, TPID_8021Q | TPID_8021AD | TPID_QINQ_LEGACY) {
             if bytes.len() < offset + TAG_LEN {
                 return Err(YeyoError::Truncated {

@@ -143,3 +143,44 @@ fn test_parse_dont_fragment_ok() -> Result<(), Box<dyn Error>> {
     assert_eq!(ip.fragment_offset, 0);
     Ok(())
 }
+
+fn max_header(len: usize) -> Vec<u8> {
+    let mut bytes = common::ipv4(17, SRC, DST, &[0; 40]);
+    bytes[0] = 0x4f;
+    bytes.truncate(len);
+    bytes
+}
+
+#[test]
+fn test_parse_max_header_length_ok() -> Result<(), Box<dyn Error>> {
+    let ip = Ipv4Header::parse(&max_header(60))?;
+
+    assert_eq!((ip.header_len, ip.total_length), (60, 60));
+    Ok(())
+}
+
+#[test]
+fn test_parse_max_header_one_byte_short_err() {
+    let result = Ipv4Header::parse(&max_header(59));
+
+    assert_eq!(
+        result,
+        Err(YeyoError::Truncated {
+            layer: Layer::Ipv4,
+            needed: 60,
+            got: 59,
+        })
+    );
+}
+
+#[test]
+fn test_parse_total_length_equals_header_ok() -> Result<(), Box<dyn Error>> {
+    let mut bytes = common::ipv4(17, SRC, DST, &[0; 4]);
+    bytes[0] = 0x46;
+    bytes[2..4].copy_from_slice(&24u16.to_be_bytes());
+
+    let ip = Ipv4Header::parse(&bytes)?;
+
+    assert_eq!((ip.header_len, ip.total_length), (24, 24));
+    Ok(())
+}

@@ -10,6 +10,7 @@ pub fn printable(bytes: &[u8]) -> String {
     while let Some(c) = chars.next() {
         match c {
             '\n' => out.push('\n'),
+            // CRLF becomes a plain line break; a lone CR could move the cursor and is hidden.
             '\r' if chars.peek() == Some(&'\n') => {}
             '\t' => out.push_str(TAB),
             c if is_hidden(c) => out.push(HIDDEN),
@@ -26,6 +27,7 @@ pub fn human_bytes(bytes: u64) -> String {
     }
     let mut value = bytes as f64 / 1024.0;
     let mut unit = 0;
+    // 1023.95 would print as "1024.0"; move to the next unit instead.
     while value >= 1023.95 && unit < UNITS.len() - 1 {
         value /= 1024.0;
         unit += 1;
@@ -73,6 +75,8 @@ pub fn wrap_tagged<T: Copy + PartialEq>(
     rows
 }
 
+// Control and bidi-override characters let payloads rewrite the terminal or disguise
+// text (CVE-2021-42574), so they are shown as dots.
 fn is_hidden(c: char) -> bool {
     c.is_control()
         || c == char::REPLACEMENT_CHARACTER

@@ -1,6 +1,7 @@
 use super::Http;
 
 const FORM_TYPE: &str = "application/x-www-form-urlencoded";
+// Bounds the work a hostile body can cause.
 const MAX_PAIRS: usize = 64;
 
 pub fn form(http: &Http) -> Option<Vec<(String, String)>> {
@@ -41,6 +42,7 @@ fn decode(bytes: &[u8]) -> String {
                     i += 3;
                     continue;
                 }
+                // A broken escape is kept as typed rather than dropped.
                 out.push(b'%');
             }
             byte => out.push(byte),

@@ -61,6 +61,7 @@ pub fn describe(devices: Vec<Device>) -> Vec<Interface> {
         .collect()
 }
 
+// The first interface that is up and connected, like tcpdump's default pick.
 fn is_usable(d: &Device) -> bool {
     d.flags.is_up()
         && d.flags.is_running()

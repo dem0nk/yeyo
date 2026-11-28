@@ -73,6 +73,8 @@ impl Ipv6Header {
 
             let ext_len = match protocol {
                 FRAGMENT => EXTENSION_MIN_LEN,
+                // AH counts 4-byte units minus 2 (RFC 4302); the others count 8-byte units
+                // after the first 8 bytes (RFC 8200).
                 AUTHENTICATION => (bytes[offset + 1] as usize + 2) * 4,
                 _ => (bytes[offset + 1] as usize + 1) * 8,
             };
@@ -100,6 +102,7 @@ impl Ipv6Header {
             protocol = bytes[offset];
             offset += ext_len;
 
+            // In a later fragment the bytes after this header are mid-stream data, not headers.
             if later_fragment {
                 break;
             }

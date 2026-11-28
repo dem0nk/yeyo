@@ -4,6 +4,7 @@ use crate::packet::{Endpoints, Packet, Transport};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 
+// Bounds memory when scanning traffic opens many short-lived connections.
 const MAX_CONVERSATIONS: usize = 128;
 const PROTO_TCP: u8 = 6;
 
@@ -16,6 +17,7 @@ pub struct Key {
 
 impl Key {
     pub fn new(endpoints: Endpoints) -> Self {
+        // Sorting the endpoints gives both directions the same key.
         let (a, b) = if endpoints.src <= endpoints.dst {
             (endpoints.src, endpoints.dst)
         } else {
@@ -220,6 +222,8 @@ impl Conversations {
 fn roles(packet: &Packet<'_>, endpoints: Endpoints) -> (SocketAddr, SocketAddr) {
     match &packet.transport {
         Some(Transport::Tcp(tcp))
+            // A SYN+ACK comes from the server. Otherwise the first sender is assumed to be the
+            // client, which is right for any conversation seen from its start.
             if tcp.flags.contains(TcpFlags::SYN) && tcp.flags.contains(TcpFlags::ACK) =>
         {
             (endpoints.dst, endpoints.src)

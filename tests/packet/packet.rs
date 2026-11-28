@@ -626,3 +626,16 @@ fn test_parse_other_protocol_over_ipv6_ok() -> Result<(), Box<dyn Error>> {
     assert_eq!(pkt.payload, &[9; 12]);
     Ok(())
 }
+
+#[test]
+fn test_payload_total_length_equals_header_is_empty_ok() -> Result<(), Box<dyn Error>> {
+    let mut ip_bytes = common::ipv4(47, [10, 0, 0, 1], [10, 0, 0, 2], &[9; 6]);
+    ip_bytes[2..4].copy_from_slice(&20u16.to_be_bytes());
+    let bytes = common::ethernet(0x0800, &ip_bytes);
+
+    let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
+
+    assert!(matches!(pkt.transport, Some(Transport::Other(47))));
+    assert!(pkt.payload.is_empty());
+    Ok(())
+}

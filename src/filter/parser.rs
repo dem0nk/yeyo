@@ -2,6 +2,7 @@ use super::lexer::{Error, Kind, Token};
 use super::{Expr, Field, Net, Op, Value};
 use std::net::IpAddr;
 
+// The parser recurses per '(' and '!'; the cap keeps deep input from overflowing the stack.
 pub(super) const MAX_DEPTH: usize = 32;
 
 const PROTOCOLS: [(&str, u16); 4] = [("icmp", 1), ("tcp", 6), ("udp", 17), ("icmpv6", 58)];
@@ -55,6 +56,7 @@ impl Parser<'_> {
         Some(column)
     }
 
+    // Precedence, loosest first: '||', then '&&', then '!' and parentheses.
     fn or(&mut self) -> Result<Expr, Error> {
         let mut left = self.and()?;
         while self.eat(&Kind::Or).is_some() {

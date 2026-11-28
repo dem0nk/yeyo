@@ -9,6 +9,7 @@ const SECRET_HEADERS: [&str; 4] = [
 const SECRET_KEY_PARTS: [&str; 6] = ["pass", "pwd", "token", "secret", "apikey", "api_key"];
 const SECRET_KEYS: [&str; 1] = ["auth"];
 const VERSION_PREFIX: &str = "HTTP/1.";
+// "HTTP/1.1 200"
 const STATUS_LINE_LEN: usize = 12;
 const TOKEN_SYMBOLS: &[u8] = b"!#$%&'*+-.^_`|~";
 
@@ -52,6 +53,7 @@ pub fn marks(text: &str) -> Vec<(Mark, &str)> {
             pieces.push(Mark::Method, start, start + STATUS_LINE_LEN);
             pieces.push(Mark::Plain, start + STATUS_LINE_LEN, end);
             in_headers = true;
+        // The blank line ends the headers; later "name: value" lines are body text.
         } else if in_headers && body.is_empty() {
             in_headers = false;
         } else if in_headers && let Some(colon) = header_colon(body) {
@@ -123,6 +125,7 @@ fn header(pieces: &mut Pieces, text: &str, start: usize, colon: usize, end: usiz
     pieces.push(mark, value, end);
 }
 
+// A urlencoded body has no raw whitespace, which keeps prose with '=' unmarked.
 fn is_form_line(line: &str) -> bool {
     line.contains('=') && !line.contains(char::is_whitespace)
 }
