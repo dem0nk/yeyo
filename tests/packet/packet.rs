@@ -3,9 +3,10 @@ use crate::common;
 use std::error::Error;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use yeyo::error::{Layer, YeyoError};
-use yeyo::packet::Link;
+use yeyo::packet::arp::Operation;
 use yeyo::packet::link::LinkType;
 use yeyo::packet::{Endpoints, IpHeader, Packet, Transport, tcp::TcpFlags};
+use yeyo::packet::{Link, Network};
 
 #[test]
 fn test_parse_ipv4_udp_ok() -> Result<(), Box<dyn Error>> {
@@ -15,7 +16,7 @@ fn test_parse_ipv4_udp_ok() -> Result<(), Box<dyn Error>> {
 
     let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
 
-    match pkt.ip {
+    match pkt.ip() {
         Some(IpHeader::V4(ip)) => {
             assert_eq!(ip.src, Ipv4Addr::new(192, 168, 1, 2));
             assert_eq!(ip.dst, Ipv4Addr::new(8, 8, 8, 8));
@@ -57,7 +58,7 @@ fn test_parse_ipv4_later_fragment_has_no_transport_ok() -> Result<(), Box<dyn Er
 
     let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
 
-    assert!(matches!(pkt.ip, Some(IpHeader::V4(_))));
+    assert!(matches!(pkt.ip(), Some(IpHeader::V4(_))));
     assert!(pkt.transport.is_none());
     Ok(())
 }
@@ -71,7 +72,7 @@ fn test_parse_ipv6_udp_ok() -> Result<(), Box<dyn Error>> {
 
     let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
 
-    match pkt.ip {
+    match pkt.ip() {
         Some(IpHeader::V6(ip)) => {
             assert_eq!(ip.src, src);
             assert_eq!(ip.dst, dst);
@@ -104,7 +105,7 @@ fn test_parse_ipv6_later_fragment_has_no_transport_ok() -> Result<(), Box<dyn Er
 
     let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
 
-    assert!(matches!(pkt.ip, Some(IpHeader::V6(_))));
+    assert!(matches!(pkt.ip(), Some(IpHeader::V6(_))));
     assert!(pkt.transport.is_none());
     Ok(())
 }
@@ -180,7 +181,7 @@ fn test_parse_loopback_ipv4_udp_ok() -> Result<(), Box<dyn Error>> {
     let pkt = Packet::parse(LinkType::Loopback, &bytes)?;
 
     assert!(matches!(pkt.link, Link::Loopback));
-    assert!(matches!(pkt.ip, Some(IpHeader::V4(_))));
+    assert!(matches!(pkt.ip(), Some(IpHeader::V4(_))));
     assert!(matches!(pkt.transport, Some(Transport::Udp(_))));
     Ok(())
 }
@@ -199,7 +200,7 @@ fn test_parse_loopback_ipv6_ok() -> Result<(), Box<dyn Error>> {
 
     let pkt = Packet::parse(LinkType::Loopback, &bytes)?;
 
-    assert!(matches!(pkt.ip, Some(IpHeader::V6(_))));
+    assert!(matches!(pkt.ip(), Some(IpHeader::V6(_))));
     Ok(())
 }
 
@@ -234,7 +235,7 @@ fn test_parse_raw_ipv4_ok() -> Result<(), Box<dyn Error>> {
 
     let pkt = Packet::parse(LinkType::Raw, &bytes)?;
 
-    assert!(matches!(pkt.ip, Some(IpHeader::V4(_))));
+    assert!(matches!(pkt.ip(), Some(IpHeader::V4(_))));
     Ok(())
 }
 
@@ -266,12 +267,12 @@ fn test_parse_raw_bad_version_err() {
 
 #[test]
 fn test_parse_ethernet_non_ip_ok() -> Result<(), Box<dyn Error>> {
-    let bytes = common::ethernet(0x0806, &[0; 28]);
+    let bytes = common::ethernet(0x88cc, &[0; 28]);
 
     let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
 
     assert!(matches!(pkt.link, Link::Ethernet(_)));
-    assert!(pkt.ip.is_none());
+    assert!(pkt.ip().is_none());
     Ok(())
 }
 
@@ -422,25 +423,26 @@ fn test_payload_later_fragment_is_fragment_data_ok() -> Result<(), Box<dyn Error
 
 #[test]
 fn test_payload_unknown_ip_protocol_is_ip_payload_ok() -> Result<(), Box<dyn Error>> {
-    let icmp = [8, 0, 0, 0, 0, 1, 0, 1];
-    let ip_bytes = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &icmp);
+    let gre = [0, 0, 0x08, 0x00, 1, 2, 3];
+    let ip_bytes = common::ipv4(47, [10, 0, 0, 1], [10, 0, 0, 2], &gre);
     let bytes = common::ethernet(0x0800, &ip_bytes);
 
     let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
 
-    assert!(pkt.transport.is_none());
-    assert_eq!(pkt.payload, &icmp);
+    assert!(matches!(pkt.transport, Some(Transport::Other(47))));
+    assert_eq!(pkt.payload, &gre);
     Ok(())
 }
 
 #[test]
 fn test_payload_non_ip_is_after_link_ok() -> Result<(), Box<dyn Error>> {
-    let arp = [0x00, 0x01, 0x08, 0x00, 6, 4, 0, 1];
-    let bytes = common::ethernet(0x0806, &arp);
+    let lldp = [0x02, 0x07, 0x04, 1, 2, 3];
+    let bytes = common::ethernet(0x88cc, &lldp);
 
     let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
 
-    assert_eq!(pkt.payload, &arp);
+    assert!(pkt.network.is_none());
+    assert_eq!(pkt.payload, &lldp);
     Ok(())
 }
 
@@ -482,13 +484,145 @@ fn test_endpoints_ipv6_udp_ok() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn test_endpoints_none_without_ports_ok() -> Result<(), Box<dyn Error>> {
-    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
-    let arp = common::ethernet(0x0806, &[0; 28]);
+    let icmp = common::ipv4(
+        1,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::icmp(8, 0, [0, 1, 0, 1]),
+    );
+    let arp = common::ethernet(0x0806, &common::arp(1, [10, 0, 0, 1], [10, 0, 0, 2]));
     let mut fragment = common::ipv4(6, [10, 0, 0, 1], [10, 0, 0, 2], &[0; 8]);
     fragment[6..8].copy_from_slice(&0x00b9u16.to_be_bytes());
 
     assert_eq!(Packet::parse(LinkType::Raw, &icmp)?.endpoints(), None);
     assert_eq!(Packet::parse(LinkType::Ethernet, &arp)?.endpoints(), None);
     assert_eq!(Packet::parse(LinkType::Raw, &fragment)?.endpoints(), None);
+    Ok(())
+}
+
+#[test]
+fn test_parse_arp_network_ok() -> Result<(), Box<dyn Error>> {
+    let bytes = common::ethernet(0x0806, &common::arp(1, [10, 0, 0, 1], [10, 0, 0, 2]));
+
+    let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
+
+    assert!(matches!(pkt.network, Some(Network::Arp(_))));
+    assert!(pkt.ip().is_none());
+    assert!(pkt.transport.is_none());
+    assert!(pkt.endpoints().is_none());
+    assert_eq!(
+        pkt.arp().map(|arp| arp.target_ip),
+        Some(Ipv4Addr::new(10, 0, 0, 2))
+    );
+    Ok(())
+}
+
+#[test]
+fn test_parse_arp_in_vlan_ok() -> Result<(), Box<dyn Error>> {
+    let tagged = common::vlan_tag(10, 0x0806, &common::arp(2, [10, 0, 0, 2], [10, 0, 0, 1]));
+    let bytes = common::ethernet(0x8100, &tagged);
+
+    let pkt = Packet::parse(LinkType::Ethernet, &bytes)?;
+
+    assert_eq!(pkt.arp().map(|arp| arp.operation), Some(Operation::Reply));
+    Ok(())
+}
+
+#[test]
+fn test_parse_arp_truncated_err() {
+    let arp = common::arp(1, [10, 0, 0, 1], [10, 0, 0, 2]);
+    let bytes = common::ethernet(0x0806, &arp[..27]);
+
+    assert_eq!(
+        Packet::parse(LinkType::Ethernet, &bytes).err(),
+        Some(YeyoError::Truncated {
+            layer: Layer::Arp,
+            needed: 28,
+            got: 27,
+        })
+    );
+}
+
+#[test]
+fn test_parse_icmp_transport_and_payload_ok() -> Result<(), Box<dyn Error>> {
+    let mut icmp = common::icmp(8, 0, [0, 1, 0, 9]);
+    icmp.extend_from_slice(b"ping data");
+    let bytes = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &icmp);
+
+    let pkt = Packet::parse(LinkType::Raw, &bytes)?;
+
+    match &pkt.transport {
+        Some(Transport::Icmp(icmp)) => assert_eq!(icmp.echo.map(|echo| echo.seq), Some(9)),
+        _ => panic!("expected ICMP"),
+    }
+    assert_eq!(pkt.payload, b"ping data");
+    assert!(pkt.endpoints().is_none());
+    Ok(())
+}
+
+#[test]
+fn test_parse_icmp_truncated_err() {
+    let bytes = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+
+    assert_eq!(
+        Packet::parse(LinkType::Raw, &bytes).err(),
+        Some(YeyoError::Truncated {
+            layer: Layer::Icmp,
+            needed: 8,
+            got: 4,
+        })
+    );
+}
+
+#[test]
+fn test_parse_icmpv6_after_extension_headers_ok() -> Result<(), Box<dyn Error>> {
+    let icmp = common::icmp(135, 0, [0; 4]);
+    let chain = common::ipv6_ext(58, &icmp);
+    let bytes = common::ipv6(0, Ipv6Addr::LOCALHOST, Ipv6Addr::LOCALHOST, &chain);
+
+    let pkt = Packet::parse(LinkType::Raw, &bytes)?;
+
+    match &pkt.transport {
+        Some(Transport::Icmpv6(icmp)) => assert_eq!(icmp.name(), Some("neighbor solicitation")),
+        _ => panic!("expected ICMPv6"),
+    }
+    Ok(())
+}
+
+#[test]
+fn test_parse_icmp_number_over_ipv6_is_icmp_v4_ok() -> Result<(), Box<dyn Error>> {
+    let bytes = common::ipv6(
+        1,
+        Ipv6Addr::LOCALHOST,
+        Ipv6Addr::LOCALHOST,
+        &common::icmp(8, 0, [0, 1, 0, 1]),
+    );
+
+    let pkt = Packet::parse(LinkType::Raw, &bytes)?;
+
+    assert!(matches!(pkt.transport, Some(Transport::Icmp(_))));
+    Ok(())
+}
+
+#[test]
+fn test_parse_later_icmp_fragment_has_no_transport_ok() -> Result<(), Box<dyn Error>> {
+    let mut bytes = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[1, 2, 3]);
+    bytes[6..8].copy_from_slice(&0x0010u16.to_be_bytes());
+
+    let pkt = Packet::parse(LinkType::Raw, &bytes)?;
+
+    assert!(pkt.transport.is_none());
+    assert_eq!(pkt.payload, &[1, 2, 3]);
+    Ok(())
+}
+
+#[test]
+fn test_parse_other_protocol_over_ipv6_ok() -> Result<(), Box<dyn Error>> {
+    let bytes = common::ipv6(132, Ipv6Addr::LOCALHOST, Ipv6Addr::LOCALHOST, &[9; 12]);
+
+    let pkt = Packet::parse(LinkType::Raw, &bytes)?;
+
+    assert!(matches!(pkt.transport, Some(Transport::Other(132))));
+    assert_eq!(pkt.payload, &[9; 12]);
     Ok(())
 }

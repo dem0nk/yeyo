@@ -1,7 +1,9 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod arp;
 mod ethernet;
+mod icmp;
 mod ipv4;
 mod ipv6;
 mod link;

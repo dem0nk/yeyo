@@ -38,9 +38,12 @@ fn eval(expr: &Expr, context: &Context) -> bool {
 fn has(field: Field, context: &Context) -> bool {
     let packet = context.packet;
     match field {
-        Field::Ip => packet.ip.is_some(),
+        Field::Ip => packet.ip().is_some(),
         Field::Tcp => matches!(packet.transport, Some(Transport::Tcp(_))),
         Field::Udp => matches!(packet.transport, Some(Transport::Udp(_))),
+        Field::Arp => packet.arp().is_some(),
+        Field::Icmp => matches!(packet.transport, Some(Transport::Icmp(_))),
+        Field::Icmpv6 => matches!(packet.transport, Some(Transport::Icmpv6(_))),
         Field::Http => context.http.is_some(),
         _ => !values(field, context).is_empty(),
     }
@@ -48,7 +51,7 @@ fn has(field: Field, context: &Context) -> bool {
 
 fn values<'a>(field: Field, context: &Context<'_, 'a>) -> Vec<Got<'a>> {
     let packet = context.packet;
-    let ip = packet.ip.as_ref();
+    let ip = packet.ip();
     let ports = |want_tcp: bool| match (&packet.transport, want_tcp) {
         (Some(Transport::Tcp(tcp)), true) => Some((tcp.src_port, tcp.dst_port)),
         (Some(Transport::Udp(udp)), false) => Some((udp.src_port, udp.dst_port)),
@@ -76,6 +79,14 @@ fn values<'a>(field: Field, context: &Context<'_, 'a>) -> Vec<Got<'a>> {
             .map(|(_, dst)| Got::Num(dst))
             .into_iter()
             .collect(),
+        Field::IcmpType => match &packet.transport {
+            Some(Transport::Icmp(icmp)) => vec![Got::Num(u16::from(icmp.kind))],
+            _ => Vec::new(),
+        },
+        Field::Icmpv6Type => match &packet.transport {
+            Some(Transport::Icmpv6(icmp)) => vec![Got::Num(u16::from(icmp.kind))],
+            _ => Vec::new(),
+        },
         Field::HttpMethod => http
             .and_then(|http| http.method())
             .map(Got::Text)
@@ -86,7 +97,13 @@ fn values<'a>(field: Field, context: &Context<'_, 'a>) -> Vec<Got<'a>> {
             .map(Got::Text)
             .into_iter()
             .collect(),
-        Field::Ip | Field::Tcp | Field::Udp | Field::Http => Vec::new(),
+        Field::Ip
+        | Field::Tcp
+        | Field::Udp
+        | Field::Arp
+        | Field::Icmp
+        | Field::Icmpv6
+        | Field::Http => Vec::new(),
     }
 }
 

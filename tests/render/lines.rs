@@ -65,11 +65,85 @@ fn test_line_tcp_no_flags_ok() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn test_line_unknown_protocol_ok() -> Result<(), Box<dyn Error>> {
-    let ip = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+    let ip = common::ipv4(47, [10, 0, 0, 1], [10, 0, 0, 2], &[0; 4]);
 
     let line = render(LinkType::Raw, &ip)?;
 
-    assert_eq!(line, "0.000000 10.0.0.1 > 10.0.0.2 proto 1 len 99\n");
+    assert_eq!(line, "0.000000 10.0.0.1 > 10.0.0.2 proto 47 len 99\n");
+    Ok(())
+}
+
+#[test]
+fn test_line_icmp_echo_ok() -> Result<(), Box<dyn Error>> {
+    let ip = common::ipv4(
+        1,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::icmp(8, 0, [0, 1, 0, 5]),
+    );
+
+    let line = render(LinkType::Raw, &ip)?;
+
+    assert_eq!(
+        line,
+        "0.000000 10.0.0.1 > 10.0.0.2 ICMP echo request id 1 seq 5 len 99\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_line_icmp_unknown_type_ok() -> Result<(), Box<dyn Error>> {
+    let ip = common::ipv4(
+        1,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::icmp(42, 0, [0; 4]),
+    );
+
+    let line = render(LinkType::Raw, &ip)?;
+
+    assert_eq!(line, "0.000000 10.0.0.1 > 10.0.0.2 ICMP type 42 len 99\n");
+    Ok(())
+}
+
+#[test]
+fn test_line_icmpv6_neighbor_advertisement_ok() -> Result<(), Box<dyn Error>> {
+    let src: std::net::Ipv6Addr = "fe80::1".parse()?;
+    let dst: std::net::Ipv6Addr = "ff02::1".parse()?;
+    let ip = common::ipv6(58, src, dst, &common::icmp(136, 0, [0; 4]));
+
+    let line = render(LinkType::Raw, &ip)?;
+
+    assert_eq!(
+        line,
+        "0.000000 fe80::1 > ff02::1 ICMPv6 neighbor advertisement len 99\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_line_arp_reply_ok() -> Result<(), Box<dyn Error>> {
+    let bytes = common::ethernet(0x0806, &common::arp(2, [10, 0, 0, 2], [10, 0, 0, 1]));
+
+    let line = render(LinkType::Ethernet, &bytes)?;
+
+    assert_eq!(
+        line,
+        "0.000000 ARP 10.0.0.2 is-at aa:bb:cc:dd:ee:ff len 99\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_line_arp_other_operation_ok() -> Result<(), Box<dyn Error>> {
+    let bytes = common::ethernet(0x0806, &common::arp(3, [10, 0, 0, 2], [10, 0, 0, 1]));
+
+    let line = render(LinkType::Ethernet, &bytes)?;
+
+    assert_eq!(
+        line,
+        "0.000000 ARP operation 3 10.0.0.2 > 10.0.0.1 len 99\n"
+    );
     Ok(())
 }
 
@@ -88,18 +162,28 @@ fn test_line_later_fragment_ok() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn test_line_non_ip_ethertype_ok() -> Result<(), Box<dyn Error>> {
-    let bytes = common::ethernet(0x0806, &[0; 28]);
+fn test_line_arp_request_ok() -> Result<(), Box<dyn Error>> {
+    let bytes = common::ethernet(0x0806, &common::arp(1, [10, 0, 0, 1], [10, 0, 0, 2]));
 
     let line = render(LinkType::Ethernet, &bytes)?;
 
-    assert_eq!(line, "0.000000 ethertype 0x0806 len 99\n");
+    assert_eq!(line, "0.000000 ARP who-has 10.0.0.2 tell 10.0.0.1 len 99\n");
+    Ok(())
+}
+
+#[test]
+fn test_line_non_ip_ethertype_ok() -> Result<(), Box<dyn Error>> {
+    let bytes = common::ethernet(0x88cc, &[0; 28]);
+
+    let line = render(LinkType::Ethernet, &bytes)?;
+
+    assert_eq!(line, "0.000000 ethertype 0x88cc len 99\n");
     Ok(())
 }
 
 #[test]
 fn test_line_time_relative_to_first_ok() -> Result<(), Box<dyn Error>> {
-    let ip = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[]);
+    let ip = common::ipv4(47, [10, 0, 0, 1], [10, 0, 0, 2], &[]);
     let packet = Packet::parse(LinkType::Raw, &ip)?;
     let mut out = Vec::new();
     let mut lines = Lines::new(&mut out);
@@ -117,7 +201,7 @@ fn test_line_time_relative_to_first_ok() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn test_line_untimed_first_does_not_set_start_ok() -> Result<(), Box<dyn Error>> {
-    let ip = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[]);
+    let ip = common::ipv4(47, [10, 0, 0, 1], [10, 0, 0, 2], &[]);
     let packet = Packet::parse(LinkType::Raw, &ip)?;
     let mut out = Vec::new();
     let mut lines = Lines::new(&mut out);
@@ -151,7 +235,7 @@ fn test_line_bad_packet_ok() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn test_line_write_failure_err() -> Result<(), Box<dyn Error>> {
-    let ip = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[]);
+    let ip = common::ipv4(47, [10, 0, 0, 1], [10, 0, 0, 2], &[]);
     let packet = Packet::parse(LinkType::Raw, &ip)?;
     let mut full = [0u8; 4];
 

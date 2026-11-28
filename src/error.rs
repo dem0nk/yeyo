@@ -12,6 +12,7 @@ pub enum Layer {
     Tcp,
     Udp,
     Icmp,
+    Icmpv6,
 }
 
 impl fmt::Display for Layer {
@@ -27,6 +28,7 @@ impl fmt::Display for Layer {
             Layer::Tcp => "TCP",
             Layer::Udp => "UDP",
             Layer::Icmp => "ICMP",
+            Layer::Icmpv6 => "ICMPv6",
         })
     }
 }

@@ -40,7 +40,10 @@ impl Picker {
         frame.render_widget(Clear, area);
         let block = panel("conversations");
         if self.keys.is_empty() {
-            let empty = Line::styled("no conversations yet", theme::MUTED);
+            let empty = Line::styled(
+                "no TCP/UDP conversations (ICMP/ARP can't be followed)",
+                theme::MUTED,
+            );
             frame.render_widget(Paragraph::new(empty).block(block), area);
             return;
         }

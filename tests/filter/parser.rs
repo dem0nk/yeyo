@@ -372,3 +372,31 @@ fn test_parse_keeps_original_text_ok() -> Result<(), Box<dyn Error>> {
     assert_eq!(Filter::parse(text)?.text(), text);
     Ok(())
 }
+
+#[test]
+fn test_parse_icmp_fields_ok() -> Result<(), Box<dyn Error>> {
+    assert_eq!(tree("arp")?, Expr::Has(Field::Arp));
+    assert_eq!(tree("icmp")?, Expr::Has(Field::Icmp));
+    assert_eq!(tree("icmpv6")?, Expr::Has(Field::Icmpv6));
+    assert_eq!(
+        tree("icmp.type == 0")?,
+        Expr::Cmp(Field::IcmpType, Op::Eq, Value::Num(0))
+    );
+    assert_eq!(
+        tree("icmpv6.type >= 255")?,
+        Expr::Cmp(Field::Icmpv6Type, Op::Ge, Value::Num(255))
+    );
+    Ok(())
+}
+
+#[test]
+fn test_parse_icmp_type_out_of_range_err() {
+    rejected("icmp.type == 256", 14, "not a number (0-255)");
+    rejected("icmpv6.type == echo", 16, "not a number (0-255)");
+}
+
+#[test]
+fn test_parse_compare_arp_presence_err() {
+    rejected("arp == 1", 5, "'arp' can't be compared");
+    rejected("icmp != 8", 6, "'icmp' can't be compared");
+}

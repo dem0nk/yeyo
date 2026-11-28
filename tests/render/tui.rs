@@ -490,7 +490,12 @@ fn test_packet_row_coloured_by_protocol_ok() -> Result<(), Box<dyn Error>> {
 #[test]
 fn test_packet_row_other_protocol_coloured_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
-    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+    let icmp = common::ipv4(
+        1,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::icmp(8, 0, [0, 1, 0, 1]),
+    );
 
     view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
     let buffer = drawn(&view)?;
@@ -706,13 +711,18 @@ fn text_of(view: &View) -> Result<String, Box<dyn Error>> {
 #[test]
 fn test_picker_empty_shows_message_and_stays_open_ok() -> Result<(), Box<dyn Error>> {
     let mut view = View::default();
-    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+    let icmp = common::ipv4(
+        1,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::icmp(8, 0, [0, 1, 0, 1]),
+    );
     view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
 
     follow(&mut view);
     let text = text_of(&view)?;
 
-    assert!(text.contains("no conversations yet"));
+    assert!(text.contains("no TCP/UDP conversations (ICMP/ARP can't be followed)"));
     assert!(text.contains("esc  close"));
     Ok(())
 }
@@ -756,7 +766,12 @@ fn test_picker_starts_at_top_without_ports_on_screen_ok() -> Result<(), Box<dyn 
     let mut view = View::default();
     send(&mut view, CLIENT, SERVER, b"old ")?;
     send(&mut view, OTHER, SERVER, b"new ")?;
-    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &[8, 0, 0, 0]);
+    let icmp = common::ipv4(
+        1,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::icmp(8, 0, [0, 1, 0, 1]),
+    );
     view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
 
     follow(&mut view);
@@ -1082,7 +1097,7 @@ fn test_server_follow_on_empty_picker_does_nothing_ok() -> Result<(), Box<dyn Er
     follow_server(&mut view);
     let text = text_of(&view)?;
 
-    assert!(text.contains("no conversations yet"));
+    assert!(text.contains("no TCP/UDP conversations (ICMP/ARP can't be followed)"));
     assert!(!text.contains("following"));
     Ok(())
 }
@@ -1546,5 +1561,69 @@ fn test_stream_side_change_after_newline_adds_no_blank_row_ok() -> Result<(), Bo
         .ok_or("no ping")?;
 
     assert!(rows[ping + 1].contains("pong"), "rows: {rows:#?}");
+    Ok(())
+}
+
+#[test]
+fn test_latest_line_colour_for_arp_and_icmp_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let arp = common::ethernet(0x0806, &common::arp(1, [10, 0, 0, 1], [10, 0, 0, 2]));
+    view.packet(42, &Packet::parse(LinkType::Ethernet, &arp)?);
+    let arp_colour = last_color_of(&drawn(&view)?, "ARP who-has");
+
+    let icmp = common::ipv4(
+        1,
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        &common::icmp(8, 0, [0, 1, 0, 1]),
+    );
+    view.packet(28, &Packet::parse(LinkType::Raw, &icmp)?);
+    let icmp_colour = last_color_of(&drawn(&view)?, "ICMP echo request");
+
+    assert_eq!(arp_colour, Some(Color::LightYellow));
+    assert_eq!(icmp_colour, Some(Color::LightMagenta));
+    Ok(())
+}
+
+#[test]
+fn test_icmp_payload_shown_but_not_streamed_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let mut echo = common::icmp(8, 0, [0, 1, 0, 1]);
+    echo.extend_from_slice(b"PINGDATA");
+    let icmp = common::ipv4(1, [10, 0, 0, 1], [10, 0, 0, 2], &echo);
+
+    view.packet(36, &Packet::parse(LinkType::Raw, &icmp)?);
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("PINGDATA"));
+    assert_eq!(view.stream(), "");
+    Ok(())
+}
+
+#[test]
+fn test_arp_and_other_protocols_not_streamed_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let arp = common::ethernet(0x0806, &common::arp(1, [10, 0, 0, 1], [10, 0, 0, 2]));
+    let gre = common::ipv4(47, [10, 0, 0, 1], [10, 0, 0, 2], b"GREDATA");
+    let mut fragment = common::ipv4(17, [10, 0, 0, 1], [10, 0, 0, 2], b"FRAGDATA");
+    fragment[6..8].copy_from_slice(&0x0010u16.to_be_bytes());
+
+    view.packet(42, &Packet::parse(LinkType::Ethernet, &arp)?);
+    view.packet(27, &Packet::parse(LinkType::Raw, &gre)?);
+    view.packet(28, &Packet::parse(LinkType::Raw, &fragment)?);
+    send(&mut view, CLIENT, SERVER, b"tcp text")?;
+
+    assert_eq!(view.stream(), "tcp text");
+    Ok(())
+}
+
+#[test]
+fn test_empty_picker_message_fits_80_columns_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+
+    key(&mut view, KeyCode::Char('f'));
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("no TCP/UDP conversations (ICMP/ARP can't be followed)"));
     Ok(())
 }

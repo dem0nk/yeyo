@@ -1,5 +1,7 @@
 use crate::error::{Layer, YeyoError};
+use arp::Arp;
 use ethernet::EthernetHeader;
+use icmp::{Icmp, Version};
 use ipv4::Ipv4Header;
 use ipv6::Ipv6Header;
 use link::LinkType;
@@ -7,7 +9,9 @@ use std::net::{IpAddr, SocketAddr};
 use tcp::TcpHeader;
 use udp::UdpHeader;
 
+pub mod arp;
 pub mod ethernet;
+pub mod icmp;
 pub mod ipv4;
 pub mod ipv6;
 pub mod link;
@@ -16,10 +20,13 @@ pub mod udp;
 
 const ETHERTYPE_IPV4: u16 = 0x0800;
 const ETHERTYPE_IPV6: u16 = 0x86dd;
+const ETHERTYPE_ARP: u16 = 0x0806;
 const LOOPBACK_HEADER_LEN: usize = 4;
 const IP_VERSION_6: u8 = 6;
+const PROTO_ICMP: u8 = 1;
 const PROTO_TCP: u8 = 6;
 const PROTO_UDP: u8 = 17;
+const PROTO_ICMPV6: u8 = 58;
 
 pub enum Link {
     Ethernet(EthernetHeader),
@@ -32,14 +39,22 @@ pub enum IpHeader {
     V6(Ipv6Header),
 }
 
+pub enum Network {
+    Ip(IpHeader),
+    Arp(Arp),
+}
+
 pub enum Transport {
     Tcp(TcpHeader),
     Udp(UdpHeader),
+    Icmp(Icmp),
+    Icmpv6(Icmp),
+    Other(u8),
 }
 
 pub struct Packet<'a> {
     pub link: Link,
-    pub ip: Option<IpHeader>,
+    pub network: Option<Network>,
     pub transport: Option<Transport>,
     pub payload: &'a [u8],
 }
@@ -51,9 +66,10 @@ pub struct Endpoints {
     pub dst: SocketAddr,
 }
 
-enum Network {
+enum Next {
     Ipv4,
     Ipv6,
+    Arp,
     Other,
 }
 
@@ -63,9 +79,10 @@ impl<'a> Packet<'a> {
             LinkType::Ethernet => {
                 let eth = EthernetHeader::parse(bytes)?;
                 let network = match eth.ethertype {
-                    ETHERTYPE_IPV4 => Network::Ipv4,
-                    ETHERTYPE_IPV6 => Network::Ipv6,
-                    _ => Network::Other,
+                    ETHERTYPE_IPV4 => Next::Ipv4,
+                    ETHERTYPE_IPV6 => Next::Ipv6,
+                    ETHERTYPE_ARP => Next::Arp,
+                    _ => Next::Other,
                 };
                 let len = eth.header_len;
                 (Link::Ethernet(eth), network, len)
@@ -87,12 +104,21 @@ impl<'a> Packet<'a> {
         let after_link = &bytes[link_len..];
 
         let ip = match network {
-            Network::Ipv4 => IpHeader::V4(Ipv4Header::parse(after_link)?),
-            Network::Ipv6 => IpHeader::V6(Ipv6Header::parse(after_link)?),
-            Network::Other => {
+            Next::Ipv4 => IpHeader::V4(Ipv4Header::parse(after_link)?),
+            Next::Ipv6 => IpHeader::V6(Ipv6Header::parse(after_link)?),
+            Next::Arp => {
+                let arp = Arp::parse(after_link)?;
                 return Ok(Packet {
                     link,
-                    ip: None,
+                    network: Some(Network::Arp(arp)),
+                    transport: None,
+                    payload: &[],
+                });
+            }
+            Next::Other => {
+                return Ok(Packet {
+                    link,
+                    network: None,
                     transport: None,
                     payload: after_link,
                 });
@@ -105,7 +131,7 @@ impl<'a> Packet<'a> {
         if ip.is_later_fragment() {
             return Ok(Packet {
                 link,
-                ip: Some(ip),
+                network: Some(Network::Ip(ip)),
                 transport: None,
                 payload: ip_payload,
             });
@@ -123,12 +149,22 @@ impl<'a> Packet<'a> {
                 let payload = &ip_payload[udp::HEADER_LEN..end];
                 (Some(Transport::Udp(udp)), payload)
             }
-            _ => (None, ip_payload),
+            PROTO_ICMP => {
+                let icmp = Icmp::parse(Version::V4, ip_payload)?;
+                let payload = &ip_payload[icmp.header_len..];
+                (Some(Transport::Icmp(icmp)), payload)
+            }
+            PROTO_ICMPV6 => {
+                let icmp = Icmp::parse(Version::V6, ip_payload)?;
+                let payload = &ip_payload[icmp.header_len..];
+                (Some(Transport::Icmpv6(icmp)), payload)
+            }
+            other => (Some(Transport::Other(other)), ip_payload),
         };
 
         Ok(Packet {
             link,
-            ip: Some(ip),
+            network: Some(Network::Ip(ip)),
             transport,
             payload,
         })
@@ -136,11 +172,26 @@ impl<'a> Packet<'a> {
 }
 
 impl Packet<'_> {
+    pub fn ip(&self) -> Option<&IpHeader> {
+        match &self.network {
+            Some(Network::Ip(ip)) => Some(ip),
+            _ => None,
+        }
+    }
+
+    pub fn arp(&self) -> Option<&Arp> {
+        match &self.network {
+            Some(Network::Arp(arp)) => Some(arp),
+            _ => None,
+        }
+    }
+
     pub fn endpoints(&self) -> Option<Endpoints> {
-        let ip = self.ip.as_ref()?;
+        let ip = self.ip()?;
         let (src_port, dst_port) = match self.transport.as_ref()? {
             Transport::Tcp(tcp) => (tcp.src_port, tcp.dst_port),
             Transport::Udp(udp) => (udp.src_port, udp.dst_port),
+            Transport::Icmp(_) | Transport::Icmpv6(_) | Transport::Other(_) => return None,
         };
         Some(Endpoints {
             protocol: ip.protocol(),
@@ -196,10 +247,10 @@ impl IpHeader {
     }
 }
 
-fn ip_by_version(bytes: &[u8]) -> Network {
+fn ip_by_version(bytes: &[u8]) -> Next {
     if !bytes.is_empty() && bytes[0] >> 4 == IP_VERSION_6 {
-        Network::Ipv6
+        Next::Ipv6
     } else {
-        Network::Ipv4
+        Next::Ipv4
     }
 }

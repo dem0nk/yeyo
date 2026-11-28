@@ -11,6 +11,7 @@ enum Type {
     Address,
     Port,
     Protocol,
+    Byte,
     Text,
 }
 
@@ -150,7 +151,7 @@ impl Parser<'_> {
     }
 }
 
-const FIELDS: [(&str, Field); 16] = [
+const FIELDS: [(&str, Field); 21] = [
     ("ip", Field::Ip),
     ("ip.src", Field::IpSrc),
     ("ip.dst", Field::IpDst),
@@ -164,6 +165,11 @@ const FIELDS: [(&str, Field); 16] = [
     ("udp.port", Field::UdpPort),
     ("udp.srcport", Field::UdpSrcPort),
     ("udp.dstport", Field::UdpDstPort),
+    ("arp", Field::Arp),
+    ("icmp", Field::Icmp),
+    ("icmp.type", Field::IcmpType),
+    ("icmpv6", Field::Icmpv6),
+    ("icmpv6.type", Field::Icmpv6Type),
     ("http", Field::Http),
     ("http.request.method", Field::HttpMethod),
     ("http.host", Field::HttpHost),
@@ -185,7 +191,14 @@ fn name_of(field: Field) -> &'static str {
 
 fn kind(field: Field) -> Type {
     match field {
-        Field::Ip | Field::Tcp | Field::Udp | Field::Http => Type::Presence,
+        Field::Ip
+        | Field::Tcp
+        | Field::Udp
+        | Field::Arp
+        | Field::Icmp
+        | Field::Icmpv6
+        | Field::Http => Type::Presence,
+        Field::IcmpType | Field::Icmpv6Type => Type::Byte,
         Field::IpSrc | Field::IpDst | Field::IpAddr => Type::Address,
         Field::IpProto => Type::Protocol,
         Field::TcpPort
@@ -207,8 +220,9 @@ fn value(kind: &Type, text: &str) -> Option<Value> {
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(text))
             .map(|&(_, number)| number)
-            .or_else(|| number(text).filter(|&n| n <= u16::from(u8::MAX)))
+            .or_else(|| byte(text))
             .map(Value::Num),
+        Type::Byte => byte(text).map(Value::Num),
         Type::Text => Some(Value::Text(text.to_string())),
     }
 }
@@ -218,6 +232,7 @@ fn invalid(kind: &Type, text: &str) -> String {
         Type::Address => format!("'{text}' is not an IP address or network"),
         Type::Port => format!("'{text}' is not a port (0-65535)"),
         Type::Protocol => format!("'{text}' is not a protocol number (0-255) or name"),
+        Type::Byte => format!("'{text}' is not a number (0-255)"),
         Type::Presence | Type::Text => format!("'{text}' is not a valid value"),
     }
 }
@@ -227,6 +242,10 @@ fn number(text: &str) -> Option<u16> {
         return None;
     }
     text.parse().ok()
+}
+
+fn byte(text: &str) -> Option<u16> {
+    number(text).filter(|&n| n <= u16::from(u8::MAX))
 }
 
 fn net(text: &str) -> Option<Net> {

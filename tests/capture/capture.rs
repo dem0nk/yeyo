@@ -80,7 +80,7 @@ fn test_file_frame_parses_end_to_end_ok() -> Result<(), Box<dyn Error>> {
     std::fs::remove_file(&path)?;
     let pkt = Packet::parse(link, &frame.data)?;
 
-    assert!(matches!(pkt.ip, Some(IpHeader::V4(_))));
+    assert!(matches!(pkt.ip(), Some(IpHeader::V4(_))));
     assert!(matches!(pkt.transport, Some(Transport::Udp(_))));
     Ok(())
 }

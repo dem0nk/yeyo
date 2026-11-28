@@ -31,7 +31,12 @@ fn udp(src_port: u16, dst_port: u16) -> Vec<u8> {
 }
 
 fn icmp() -> Vec<u8> {
-    common::ipv4(PROTO_ICMP, CLIENT, SERVER, &[8, 0, 0, 0])
+    common::ipv4(
+        PROTO_ICMP,
+        CLIENT,
+        SERVER,
+        &common::icmp(8, 0, [0, 1, 0, 1]),
+    )
 }
 
 fn v6_tcp() -> Result<Vec<u8>, Box<dyn Error>> {
@@ -173,7 +178,7 @@ fn test_eval_absent_field_is_false_ok() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn test_eval_non_ip_packet_ok() -> Result<(), Box<dyn Error>> {
-    let frame = common::ethernet(0x0806, &[0; 28]);
+    let frame = common::ethernet(0x0806, &common::arp(1, [10, 0, 0, 1], [10, 0, 0, 2]));
     let filter = Filter::parse("ip || ip.addr != 1.2.3.4 || tcp")?;
     let packet = Packet::parse(LinkType::Ethernet, &frame)?;
 
@@ -244,4 +249,64 @@ fn test_eval_later_fragment_has_no_ports_ok() -> Result<(), Box<dyn Error>> {
     check("tcp.port == 80", &packet, false)?;
     check("tcp", &packet, false)?;
     check("ip.proto == tcp", &packet, true)
+}
+
+fn arp_frame() -> Vec<u8> {
+    common::ethernet(0x0806, &common::arp(1, CLIENT, SERVER))
+}
+
+fn on_ethernet(expr: &str, frame: &[u8]) -> Result<bool, Box<dyn Error>> {
+    Ok(Filter::parse(expr)?.matches(&Packet::parse(LinkType::Ethernet, frame)?))
+}
+
+#[test]
+fn test_eval_arp_fields_ok() -> Result<(), Box<dyn Error>> {
+    let frame = arp_frame();
+
+    assert!(on_ethernet("arp", &frame)?);
+    assert!(!on_ethernet("ip", &frame)?);
+    assert!(!on_ethernet("ip.addr == 10.0.0.1", &frame)?);
+    assert!(!on_ethernet("ip.addr != 10.0.0.1", &frame)?);
+    assert!(!on_ethernet("icmp || tcp || udp", &frame)?);
+    check("arp", &tcp(1, 2, &[]), false)
+}
+
+#[test]
+fn test_eval_icmp_fields_ok() -> Result<(), Box<dyn Error>> {
+    let echo = icmp();
+    let unreachable = common::ipv4(PROTO_ICMP, CLIENT, SERVER, &common::icmp(3, 1, [0; 4]));
+
+    check("icmp", &echo, true)?;
+    check("icmpv6", &echo, false)?;
+    check("icmp.type == 8", &echo, true)?;
+    check("icmp.type == 0", &echo, false)?;
+    check("icmp.type != 8", &unreachable, true)?;
+    check("icmp.type < 8", &unreachable, true)?;
+    check("icmp.type >= 3 && icmp.type <= 3", &unreachable, true)?;
+    check("icmpv6.type == 8", &echo, false)?;
+    check("icmp.type == 8", &tcp(1, 2, &[]), false)?;
+    check("icmp.type != 8", &tcp(1, 2, &[]), false)
+}
+
+#[test]
+fn test_eval_icmpv6_fields_ok() -> Result<(), Box<dyn Error>> {
+    let src: Ipv6Addr = "fe80::1".parse()?;
+    let dst: Ipv6Addr = "ff02::1".parse()?;
+    let packet = common::ipv6(58, src, dst, &common::icmp(135, 0, [0; 4]));
+
+    check("icmpv6", &packet, true)?;
+    check("icmp", &packet, false)?;
+    check("icmpv6.type == 135", &packet, true)?;
+    check("icmpv6.type > 132 && icmpv6.type < 138", &packet, true)?;
+    check("icmp.type == 135", &packet, false)?;
+    check("ip.proto == icmpv6", &packet, true)
+}
+
+#[test]
+fn test_eval_other_protocol_ok() -> Result<(), Box<dyn Error>> {
+    let gre = common::ipv4(47, CLIENT, SERVER, &[0; 4]);
+
+    check("ip.proto == 47", &gre, true)?;
+    check("tcp || udp || icmp", &gre, false)?;
+    check("ip && !tcp", &gre, true)
 }

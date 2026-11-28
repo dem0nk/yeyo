@@ -124,8 +124,8 @@ fn test_roles_fixed_after_first_packet_ok() -> Result<(), Box<dyn Error>> {
 #[test]
 fn test_record_without_ports_none_ok() -> Result<(), Box<dyn Error>> {
     let mut table = Conversations::default();
-    let icmp = common::ipv4(1, CLIENT.0, SERVER.0, &[8, 0, 0, 0]);
-    let arp = common::ethernet(0x0806, &[0; 28]);
+    let icmp = common::ipv4(1, CLIENT.0, SERVER.0, &common::icmp(8, 0, [0, 1, 0, 1]));
+    let arp = common::ethernet(0x0806, &common::arp(1, [10, 0, 0, 1], [10, 0, 0, 2]));
 
     let from_icmp = record(&mut table, &icmp, "")?;
     let from_arp = table.record(&Packet::parse(LinkType::Ethernet, &arp)?, 42, "");

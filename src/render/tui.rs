@@ -96,8 +96,9 @@ impl View {
         let payload = printable(packet.payload);
         let recorded = self.conversations.record(packet, len, &payload);
         let key = recorded.map(|(key, _)| key);
-        self.live
-            .push(recorded.map(|(_, side)| side), payload.clone());
+        if let Some((_, side)) = recorded {
+            self.live.push(Some(side), payload.clone());
+        }
         if let Mode::Following(following) = &mut self.mode {
             let (Some(key), Some(endpoints)) = (key, packet.endpoints()) else {
                 return;
@@ -111,7 +112,8 @@ impl View {
         let style = match packet.transport {
             Some(Transport::Tcp(_)) => theme::TCP,
             Some(Transport::Udp(_)) => theme::UDP,
-            None => theme::OTHER,
+            _ if packet.arp().is_some() => theme::ARP,
+            _ => theme::OTHER,
         };
         self.latest = Some(Line::from(vec![
             Span::styled(summary(packet), style),

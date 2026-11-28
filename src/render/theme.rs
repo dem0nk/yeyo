@@ -16,6 +16,7 @@ pub(super) const KEY: Style = Style::new()
 
 pub(super) const TCP: Style = Style::new().fg(Color::LightCyan);
 pub(super) const UDP: Style = Style::new().fg(Color::LightGreen);
+pub(super) const ARP: Style = Style::new().fg(Color::LightYellow);
 pub(super) const OTHER: Style = Style::new().fg(Color::LightMagenta);
 pub(super) const BAD: Style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
 

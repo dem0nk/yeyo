@@ -138,3 +138,19 @@ pub fn read_all(path: &Path) -> Result<Vec<Frame>, YeyoError> {
     }
     Ok(frames)
 }
+
+pub fn icmp(kind: u8, code: u8, rest: [u8; 4]) -> Vec<u8> {
+    let mut bytes = vec![kind, code, 0, 0];
+    bytes.extend_from_slice(&rest);
+    bytes
+}
+
+pub fn arp(operation: u16, sender: [u8; 4], target: [u8; 4]) -> Vec<u8> {
+    let mut bytes = vec![0, 1, 0x08, 0x00, 6, 4];
+    bytes.extend_from_slice(&operation.to_be_bytes());
+    bytes.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+    bytes.extend_from_slice(&sender);
+    bytes.extend_from_slice(&[0; 6]);
+    bytes.extend_from_slice(&target);
+    bytes
+}
