@@ -1,4 +1,5 @@
 mod conversations;
+mod highlight;
 mod lines;
 mod picker;
 mod stream;
@@ -8,6 +9,7 @@ mod theme;
 mod tui;
 
 pub use conversations::{Conversation, Conversations, Key, Target};
+pub use highlight::{Mark, marks};
 pub use lines::{Lines, print_lines};
 pub use stream::{Side, Stream};
 pub use text::{human_bytes, printable, wrap, wrap_tagged};

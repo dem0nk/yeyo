@@ -364,3 +364,11 @@ fn test_parse_long_flat_chain_ok() -> Result<(), Box<dyn Error>> {
     assert!(Filter::parse(&expr).is_ok());
     Ok(())
 }
+
+#[test]
+fn test_parse_keeps_original_text_ok() -> Result<(), Box<dyn Error>> {
+    let text = "tcp.port == 80  &&  http";
+
+    assert_eq!(Filter::parse(text)?.text(), text);
+    Ok(())
+}

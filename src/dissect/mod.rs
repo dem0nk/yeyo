@@ -2,7 +2,7 @@ mod form;
 mod http;
 
 pub use form::form;
-pub use http::{Header, Http};
+pub use http::{Header, Http, METHODS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum App<'a> {

@@ -1,4 +1,4 @@
-const METHODS: [&str; 9] = [
+pub const METHODS: [&str; 9] = [
     "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",
 ];
 const MAX_HEADERS: usize = 64;

@@ -7,6 +7,7 @@ use std::net::IpAddr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Filter {
+    text: String,
     expr: Expr,
     uses_http: bool,
 }
@@ -68,6 +69,7 @@ impl Filter {
         let parsed = lexer::tokenize(expr).and_then(|tokens| parser::parse(&tokens, expr));
         match parsed {
             Ok(tree) => Ok(Filter {
+                text: expr.to_string(),
                 uses_http: tree.uses_http(),
                 expr: tree,
             }),
@@ -77,6 +79,10 @@ impl Filter {
                 reason,
             }),
         }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
     }
 
     pub fn expr(&self) -> &Expr {

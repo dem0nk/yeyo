@@ -4,7 +4,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use std::error::Error;
 use yeyo::error::{Layer, YeyoError};
 use yeyo::packet::Packet;
@@ -1092,13 +1092,16 @@ fn numbered(view: &mut View, from: usize, to: usize) -> Result<(), Box<dyn Error
     tcp_payload(view, text.join("\n").as_bytes())
 }
 
+const SCROLL_WIDTH: u16 = 80;
+const SCROLL_HEIGHT: u16 = 21;
+
 fn scrolled_screen(view: &mut View, keys: &[KeyCode]) -> Result<String, Box<dyn Error>> {
-    screen(view, 80, 20)?;
+    screen(view, SCROLL_WIDTH, SCROLL_HEIGHT)?;
     for &code in keys {
         key(view, code);
-        screen(view, 80, 20)?;
+        screen(view, SCROLL_WIDTH, SCROLL_HEIGHT)?;
     }
-    screen(view, 80, 20)
+    screen(view, SCROLL_WIDTH, SCROLL_HEIGHT)
 }
 
 #[test]
@@ -1301,5 +1304,247 @@ fn test_footer_status_visible_with_all_keys_ok() -> Result<(), Box<dyn Error>> {
     let text = screen(&View::default(), 60, 20)?;
 
     assert!(text.contains("0 packets | capturing"));
+    Ok(())
+}
+
+fn last_style_of(buffer: &Buffer, needle: &str) -> Option<(Color, Modifier)> {
+    let cells = &buffer.content;
+    let wanted: Vec<String> = needle.chars().map(String::from).collect();
+    (0..=cells.len().saturating_sub(wanted.len()))
+        .rev()
+        .find(|&i| {
+            wanted.iter().enumerate().all(|(j, c)| {
+                cells
+                    .get(i + j)
+                    .is_some_and(|cell| cell.symbol() == c.as_str())
+            })
+        })
+        .map(|i| (cells[i].fg, cells[i].modifier))
+}
+
+const SECRET_COLOR: Color = Color::Indexed(222);
+
+#[test]
+fn test_highlight_secret_drawn_in_secret_style_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(
+        &mut view,
+        CLIENT,
+        SERVER,
+        b"POST /login HTTP/1.1\r\nHost: a.com\r\n\r\nuser=bob&password=hunter2",
+    )?;
+
+    let buffer = drawn(&view)?;
+    let (color, modifier) = last_style_of(&buffer, "hunter2").ok_or("secret not drawn")?;
+
+    assert_eq!(color, SECRET_COLOR);
+    assert!(modifier.contains(Modifier::BOLD | Modifier::UNDERLINED));
+    Ok(())
+}
+
+#[test]
+fn test_highlight_method_keeps_side_colour_and_adds_bold_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"DELETE /x HTTP/1.1\r\n\r\n")?;
+    send(
+        &mut view,
+        SERVER,
+        CLIENT,
+        b"HTTP/1.1 204 No Content\r\n\r\n",
+    )?;
+
+    let buffer = drawn(&view)?;
+
+    assert_eq!(
+        last_style_of(&buffer, "DELETE"),
+        Some((Color::Indexed(180), Modifier::BOLD))
+    );
+    assert_eq!(
+        last_style_of(&buffer, "HTTP/1.1 204"),
+        Some((Color::Indexed(110), Modifier::BOLD))
+    );
+    assert_eq!(
+        last_style_of(&buffer, "No Content"),
+        Some((Color::Indexed(110), Modifier::empty()))
+    );
+    Ok(())
+}
+
+#[test]
+fn test_highlight_header_name_bold_value_plain_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(
+        &mut view,
+        CLIENT,
+        SERVER,
+        b"GET / HTTP/1.1\r\nAccept: text/html\r\n\r\n",
+    )?;
+
+    let buffer = drawn(&view)?;
+
+    assert_eq!(
+        last_style_of(&buffer, "Accept"),
+        Some((Color::Indexed(180), Modifier::BOLD))
+    );
+    assert_eq!(
+        last_style_of(&buffer, "text/html"),
+        Some((Color::Indexed(180), Modifier::empty()))
+    );
+    Ok(())
+}
+
+#[test]
+fn test_highlight_survives_row_wrap_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    let mut payload = b"a=".to_vec();
+    payload.extend(std::iter::repeat_n(b'x', 64));
+    payload.extend_from_slice(b"&token=ABCDEFGHIJKLMNOP");
+    send(&mut view, CLIENT, SERVER, &payload)?;
+
+    let buffer = drawn(&view)?;
+    let text = screen(&view, 80, 20)?;
+
+    assert!(!text.contains("ABCDEFGHIJKLMNOP"), "secret should be cut");
+    assert_eq!(
+        last_style_of(&buffer, "MNOP").map(|style| style.0),
+        Some(SECRET_COLOR)
+    );
+    assert_eq!(
+        last_style_of(&buffer, "AB").map(|style| style.0),
+        Some(SECRET_COLOR)
+    );
+    Ok(())
+}
+
+#[test]
+fn test_highlight_payload_box_marks_too_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(
+        &mut view,
+        CLIENT,
+        SERVER,
+        b"PUT /x?apikey=s3cr3t HTTP/1.1\r\n\r\n",
+    )?;
+    key(&mut view, KeyCode::Char('c'));
+
+    let buffer = drawn(&view)?;
+
+    assert_eq!(
+        last_style_of(&buffer, "s3cr3t").map(|style| style.0),
+        Some(SECRET_COLOR)
+    );
+    assert_eq!(
+        last_style_of(&buffer, "PUT"),
+        Some((Color::Reset, Modifier::BOLD))
+    );
+    Ok(())
+}
+
+#[test]
+fn test_filter_bar_shows_display_filter_ok() -> Result<(), Box<dyn Error>> {
+    let view =
+        View::new(Some("tcp port 80")).with_display_filter(Some("http.request.method == POST"));
+
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("capture tcp port 80"));
+    assert!(text.contains("display http.request.method == POST"));
+    assert!(text.contains("follow none (f picks a conversation)"));
+    Ok(())
+}
+
+#[test]
+fn test_filter_bar_without_display_filter_ok() -> Result<(), Box<dyn Error>> {
+    let text = screen(&View::default(), 80, 20)?;
+
+    assert!(text.contains("display none"));
+    Ok(())
+}
+
+#[test]
+fn test_filter_bar_display_filter_sanitized_ok() -> Result<(), Box<dyn Error>> {
+    let view = View::default().with_display_filter(Some("tcp\u{1b}[2J\nudp"));
+
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("display tcp.[2J udp"));
+    assert!(!text.contains('\u{1b}'));
+    Ok(())
+}
+
+#[test]
+fn test_filter_bar_follow_fits_with_both_filters_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::new(Some("tcp port 80")).with_display_filter(Some("tcp.port == 80"));
+    send(&mut view, CLIENT, SERVER, b"x")?;
+
+    follow(&mut view);
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("display tcp.port == 80"));
+    assert!(text.contains("following TCP 10.0.0.1:51000 <> 10.0.0.2:80"));
+    Ok(())
+}
+
+#[test]
+fn test_stream_side_change_starts_new_row_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(
+        &mut view,
+        CLIENT,
+        SERVER,
+        b"POST / HTTP/1.1\r\n\r\nuser=bob&password=hunter2",
+    )?;
+    send(
+        &mut view,
+        SERVER,
+        CLIENT,
+        b"HTTP/1.0 501 Unsupported\r\n\r\n",
+    )?;
+
+    let buffer = drawn(&view)?;
+    let text = screen(&view, 80, 20)?;
+
+    assert!(!text.contains("hunter2HTTP"));
+    assert_eq!(
+        last_style_of(&buffer, "HTTP/1.0 501"),
+        Some((Color::Indexed(110), Modifier::BOLD))
+    );
+    assert_eq!(
+        view.stream(),
+        "POST / HTTP/1.1\n\nuser=bob&password=hunter2HTTP/1.0 501 Unsupported\n\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_stream_same_side_chunks_stay_joined_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"user=bob&pass")?;
+    send(&mut view, CLIENT, SERVER, b"word=x")?;
+
+    let text = screen(&view, 80, 20)?;
+
+    assert!(text.contains("user=bob&password=x"));
+    Ok(())
+}
+
+#[test]
+fn test_stream_side_change_after_newline_adds_no_blank_row_ok() -> Result<(), Box<dyn Error>> {
+    let mut view = View::default();
+    send(&mut view, CLIENT, SERVER, b"ping\n")?;
+    send(&mut view, SERVER, CLIENT, b"pong")?;
+
+    let buffer = drawn(&view)?;
+    let rows: Vec<String> = buffer
+        .content
+        .chunks(usize::from(buffer.area.width))
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+        .collect();
+    let ping = rows
+        .iter()
+        .rposition(|row| row.contains("ping"))
+        .ok_or("no ping")?;
+
+    assert!(rows[ping + 1].contains("pong"), "rows: {rows:#?}");
     Ok(())
 }

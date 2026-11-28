@@ -1,8 +1,9 @@
 use super::conversations::{Conversation, Conversations, Key, Target, protocol_name};
+use super::highlight::{Mark, marks};
 use super::picker::Picker;
 use super::stream::{Side, Stream};
 use super::summary::summary;
-use super::text::{printable, wrap, wrap_tagged};
+use super::text::{printable, wrap_tagged};
 use super::theme::{self, panel};
 use crate::capture::Feed;
 use crate::error::YeyoError;
@@ -59,6 +60,7 @@ struct Following {
 #[derive(Debug, Default)]
 pub struct View {
     capture_filter: Option<String>,
+    display_filter: Option<String>,
     latest: Option<Line<'static>>,
     latest_key: Option<Key>,
     payload: String,
@@ -76,10 +78,14 @@ pub struct View {
 impl View {
     pub fn new(capture_filter: Option<&str>) -> Self {
         Self {
-            capture_filter: capture_filter
-                .map(|expr| printable(expr.as_bytes()).replace('\n', " ")),
+            capture_filter: capture_filter.map(one_line),
             ..Self::default()
         }
+    }
+
+    pub fn with_display_filter(mut self, expr: Option<&str>) -> Self {
+        self.display_filter = expr.map(one_line);
+        self
     }
 
     pub fn packet(&mut self, len: u32, packet: &Packet<'_>) {
@@ -173,7 +179,7 @@ impl View {
 
     pub fn draw(&self, frame: &mut Frame) {
         let [filter, packet, payload, stream, footer] = Layout::vertical([
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Length(3),
             Constraint::Length(5),
             Constraint::Min(3),
@@ -182,7 +188,7 @@ impl View {
         .areas(frame.area());
 
         frame.render_widget(
-            Paragraph::new(self.filter_line()).block(panel("filter")),
+            Paragraph::new(self.filter_lines()).block(panel("filter")),
             filter,
         );
         let latest = match &self.latest {
@@ -192,9 +198,13 @@ impl View {
         frame.render_widget(Paragraph::new(latest).block(panel("packet")), packet);
         let block = panel("payload");
         let inner = block.inner(payload);
-        let rows = wrap(&self.payload, usize::from(inner.width));
-        let shown = &rows[..rows.len().min(usize::from(inner.height))];
-        frame.render_widget(Paragraph::new(shown.join("\n")).block(block), payload);
+        let rows = wrap_tagged(&marked(&[(None, &self.payload)]), usize::from(inner.width));
+        let shown: Vec<Line> = rows
+            .into_iter()
+            .take(usize::from(inner.height))
+            .map(styled_row)
+            .collect();
+        frame.render_widget(Paragraph::new(shown).block(block), payload);
         self.draw_stream(frame, stream);
         let status = self.status_line();
         let [keys, status_area] = Layout::horizontal([
@@ -241,20 +251,27 @@ impl View {
         ])
     }
 
-    fn filter_line(&self) -> Line<'static> {
+    fn filter_lines(&self) -> Vec<Line<'static>> {
         let mut spans = vec![Span::styled("capture ", theme::HINT)];
         spans.push(match &self.capture_filter {
             Some(expr) => Span::styled(expr.clone(), theme::FILTER),
             None => Span::styled("all packets", theme::MUTED),
         });
         spans.push(Span::styled("  │  ", theme::BORDER));
-        spans.extend(self.follow_spans());
-        Line::from(spans)
+        spans.push(Span::styled("display ", theme::HINT));
+        spans.push(match &self.display_filter {
+            Some(expr) => Span::styled(expr.clone(), theme::FILTER),
+            None => Span::styled("none", theme::MUTED),
+        });
+        vec![Line::from(spans), Line::from(self.follow_spans())]
     }
 
     fn follow_spans(&self) -> Vec<Span<'static>> {
         let Mode::Following(following) = &self.mode else {
-            return vec![Span::styled("none (f picks a conversation)", theme::MUTED)];
+            return vec![Span::styled(
+                "follow none (f picks a conversation)",
+                theme::MUTED,
+            )];
         };
         match following.target {
             Target::Connection {
@@ -293,7 +310,10 @@ impl View {
         }
         let inner = block.inner(area);
         let height = usize::from(inner.height);
-        let rows = wrap_tagged(&self.shown_stream().parts(), usize::from(inner.width));
+        let rows = wrap_tagged(
+            &marked(&self.shown_stream().parts()),
+            usize::from(inner.width),
+        );
         let max_top = rows.len().saturating_sub(height);
         self.page.set(height.max(1));
         self.max_top.set(max_top);
@@ -302,13 +322,7 @@ impl View {
             .into_iter()
             .skip(start)
             .take(height)
-            .map(|row| {
-                let spans: Vec<Span> = row
-                    .into_iter()
-                    .map(|(side, text)| Span::styled(text, side_style(side)))
-                    .collect();
-                Line::from(spans)
-            })
+            .map(styled_row)
             .collect();
         frame.render_widget(Paragraph::new(lines).block(block), area);
     }
@@ -383,6 +397,48 @@ fn side_style(side: Option<Side>) -> Style {
     }
 }
 
+type Tag = (Option<Side>, Mark);
+
+fn marked<'a>(parts: &[(Option<Side>, &'a str)]) -> Vec<(Tag, &'a str)> {
+    let mut out = Vec::new();
+    let mut previous: Option<(Option<Side>, &str)> = None;
+    for &(side, text) in parts {
+        if let Some((last_side, last_text)) = previous
+            && last_side != side
+            && !last_text.ends_with('\n')
+        {
+            out.push(((last_side, Mark::Plain), "\n"));
+        }
+        out.extend(
+            marks(text)
+                .into_iter()
+                .map(|(mark, piece)| ((side, mark), piece)),
+        );
+        previous = Some((side, text));
+    }
+    out
+}
+
+fn styled_row(row: Vec<(Tag, String)>) -> Line<'static> {
+    let spans: Vec<Span> = row
+        .into_iter()
+        .map(|((side, mark), text)| Span::styled(text, mark_style(side, mark)))
+        .collect();
+    Line::from(spans)
+}
+
+fn mark_style(side: Option<Side>, mark: Mark) -> Style {
+    match mark {
+        Mark::Plain => side_style(side),
+        Mark::Method | Mark::Header | Mark::Key => side_style(side).add_modifier(theme::KEYWORD),
+        Mark::Secret => theme::SECRET,
+    }
+}
+
+fn one_line(expr: &str) -> String {
+    printable(expr.as_bytes()).replace('\n', " ")
+}
+
 pub fn show_tui(
     feed: &Feed,
     link_type: LinkType,
@@ -396,7 +452,7 @@ pub fn show_tui(
             return Err(output(e));
         }
     };
-    let view = View::new(capture_filter);
+    let view = View::new(capture_filter).with_display_filter(display_filter.map(Filter::text));
     let shown = run(&mut terminal, feed, link_type, display_filter, view);
     let restored = ratatui::try_restore().map_err(output);
     shown?;

@@ -26,6 +26,10 @@ pub(super) const SELECTED: Style = Style::new()
 
 pub(super) const CLIENT: Style = Style::new().fg(Color::Indexed(180));
 pub(super) const SERVER: Style = Style::new().fg(Color::Indexed(110));
+pub(super) const KEYWORD: Modifier = Modifier::BOLD;
+pub(super) const SECRET: Style = Style::new()
+    .fg(Color::Indexed(222))
+    .add_modifier(Modifier::BOLD.union(Modifier::UNDERLINED));
 pub(super) const FOLLOW: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
 
 pub(super) const CAPTURING: Style = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
